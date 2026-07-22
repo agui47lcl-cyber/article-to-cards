@@ -23,7 +23,7 @@
     "ext:zip": "cross-env NODE_OPTIONS=--max-old-space-size=4096 wxt zip",
     "firefox:dev": "wxt -b firefox",
     "firefox:zip": "cross-env NODE_OPTIONS=--max-old-space-size=4096 wxt zip -b firefox",
-    "type-check": "vue-tsc --build --force",
+    "type-check": "vue-tsc --noEmit --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
     "postinstall": "wxt prepare"

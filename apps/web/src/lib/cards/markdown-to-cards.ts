@@ -118,6 +118,13 @@ export function splitCardBlocks(source: string) {
     .filter(Boolean)
 }
 
+export function splitCardRawBlocks(source: string) {
+  return source
+    .split(BLOCK_SPLIT_RE)
+    .map(part => part.trim())
+    .filter(Boolean)
+}
+
 function autoPaginate(source: string) {
   const blocks = splitCardBlocks(source)
   const pages: string[] = []

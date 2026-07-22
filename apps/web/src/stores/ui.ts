@@ -1,5 +1,6 @@
 import { store } from '@/storage'
 import { addPrefix } from '@/storage/prefix'
+import type { CardRatio, CardTemplateId } from '@/lib/cards/card-templates'
 
 /**
  * UI 状态 Store
@@ -58,14 +59,14 @@ export const useUIStore = defineStore(`ui`, () => {
   }
 
   // 长图文卡片配置
-  const cardTemplate = store.reactive<'clean' | 'note'>(addPrefix(`cardTemplate`), `clean`)
-  const cardRatio = store.reactive<'3-4' | '4-5'>(addPrefix(`cardRatio`), `3-4`)
+  const cardTemplate = store.reactive<CardTemplateId>(addPrefix(`cardTemplate`), `clean`)
+  const cardRatio = store.reactive<CardRatio>(addPrefix(`cardRatio`), `3-4`)
 
-  function setCardTemplate(template: 'clean' | 'note') {
+  function setCardTemplate(template: CardTemplateId) {
     cardTemplate.value = template
   }
 
-  function setCardRatio(ratio: '3-4' | '4-5') {
+  function setCardRatio(ratio: CardRatio) {
     cardRatio.value = ratio
   }
 
