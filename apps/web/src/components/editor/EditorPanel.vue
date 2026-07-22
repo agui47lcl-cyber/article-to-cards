@@ -14,6 +14,7 @@ import { useLocalizedUploadHostOptions } from '@/composables/useLocalizedUploadH
 import { useSlashCommand } from '@/composables/useSlashCommand'
 import { formatLocalDateTime } from '@/i18n/translate'
 import { jumpToAdjacentHeading } from '@/lib/markdown/headingNavigation'
+import { structurePlainTextForCards } from '@/lib/cards/plain-text-to-markdown'
 import { contentHasMath, loadMathJax, MATHJAX_READY_EVENT } from '@/lib/preview/mathjax'
 import { validateImageFile } from '@/lib/upload/validate-image'
 import { fileUpload } from '@/services/upload'
@@ -443,6 +444,16 @@ function createPasteHandler() {
         })
 
         return true
+      }
+
+      if (uiStore.previewMode === `cards`) {
+        const structured = structurePlainTextForCards(text)
+        if (structured) {
+          event.preventDefault()
+          view.dispatch(view.state.replaceSelection(structured.markdown))
+          toast.success(`已识别标题、列表与引用结构`)
+          return true
+        }
       }
     }
     return false

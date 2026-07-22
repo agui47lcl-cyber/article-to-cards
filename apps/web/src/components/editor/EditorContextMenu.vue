@@ -32,6 +32,7 @@ import { altSign, headingLevels as baseHeadingLevels, ctrlKey, ctrlSign, shiftSi
 import { useEditorDocumentActions } from '@/composables/useEditorDocumentActions'
 import { useEditorFormat } from '@/composables/useEditorFormat'
 import { copyPlain, readPlainFromClipboard } from '@/lib/browser/clipboard'
+import { structurePlainTextForCards } from '@/lib/cards/plain-text-to-markdown'
 import { normalizeFormulaInput } from '@/lib/markdown/formula'
 import { useConfirmStore } from '@/stores/confirm'
 import { useCssEditorStore } from '@/stores/cssEditor'
@@ -85,8 +86,13 @@ async function copyToClipboard() {
 
 async function pasteFromClipboard() {
   const text = await readPlainFromClipboard()
-  if (text !== null)
-    editorStore.replaceSelection(text)
+  if (text === null)
+    return
+
+  const structured = uiStore.previewMode === `cards` ? structurePlainTextForCards(text) : null
+  editorStore.replaceSelection(structured?.markdown ?? text)
+  if (structured)
+    toast.success(`已识别标题、列表与引用结构`)
 }
 
 function resetStyleConfirm() {

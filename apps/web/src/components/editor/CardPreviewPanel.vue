@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, Download, Files, RefreshCw, SplitSquareHorizontal } from '@lucide/vue'
+import { AlertTriangle, Download, Files, SplitSquareHorizontal } from '@lucide/vue'
 import type { CardPage } from '@/lib/cards/markdown-to-cards'
 import { exportLongformCardImage, exportLongformCardImages } from '@/services/export/card-images'
 import {
@@ -485,40 +485,39 @@ onBeforeUnmount(() => {
 
     <div id="card-preview-scroll" class="card-stage min-w-0 flex-1 overflow-y-auto p-5">
       <div ref="cardStageInnerRef" class="mx-auto flex w-full max-w-[520px] min-w-0 flex-col items-center gap-4">
-        <div class="card-toolbar flex w-full flex-nowrap items-center gap-2 rounded border bg-background px-3 py-2 text-xs text-muted-foreground">
-          <label class="toolbar-select-label">
-            <span class="sr-only">模板</span>
-            <select v-model="cardTemplate" class="toolbar-select template-select" aria-label="长图文模板">
-              <option
-                v-for="option in templateOptions"
-                :key="option.id"
-                :value="option.id"
-              >
-                {{ option.name }}
-              </option>
-            </select>
-          </label>
-          <label class="toolbar-select-label">
-            <span class="sr-only">比例</span>
-            <select v-model="cardRatio" class="toolbar-select ratio-select" aria-label="长图文比例">
-              <option
-                v-for="option in ratioOptions"
-                :key="option.id"
-                :value="option.id"
-              >
-                {{ option.label }}
-              </option>
-            </select>
-          </label>
-          <span class="toolbar-actions inline-flex min-w-0 items-center gap-2">
-            <span>{{ isPaginating ? '分页中' : `${activeIndex + 1} / ${pages.length}` }}</span>
+        <div class="card-toolbar flex w-full flex-nowrap items-center justify-center rounded border bg-background px-3 py-2 text-xs text-muted-foreground">
+          <span class="toolbar-options">
+            <label class="toolbar-select-label">
+              <span class="sr-only">模板</span>
+              <select v-model="cardTemplate" class="toolbar-select template-select" aria-label="长图文模板">
+                <option
+                  v-for="option in templateOptions"
+                  :key="option.id"
+                  :value="option.id"
+                >
+                  {{ option.name }}
+                </option>
+              </select>
+            </label>
+            <label class="toolbar-select-label">
+              <span class="sr-only">比例</span>
+              <select v-model="cardRatio" class="toolbar-select ratio-select" aria-label="长图文比例">
+                <option
+                  v-for="option in ratioOptions"
+                  :key="option.id"
+                  :value="option.id"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </span>
+          <span class="toolbar-actions">
             <button type="button" class="toolbar-action-button" :disabled="isPaginating || isExporting" @click="runAutoPagination">
-              <RefreshCw class="size-3.5" />
-              自动分页
+              {{ isPaginating ? '分页中' : '自动分页' }}
             </button>
             <span class="download-menu">
               <button type="button" class="toolbar-action-button" :disabled="isExporting" aria-haspopup="menu">
-                <Download class="size-3.5" />
                 下载
               </button>
               <span class="download-menu-panel" role="menu">
@@ -547,8 +546,8 @@ onBeforeUnmount(() => {
             :style="scaledCardStyle"
           >
             <header class="card-page-header">
-              <span>Longform Card</span>
-              <span>{{ String(activeIndex + 1).padStart(2, '0') }}</span>
+              <span>{{ cardTemplate === 'note' ? '阅读进度' : 'Longform Card' }}</span>
+              <span>{{ cardTemplate === 'note' ? `${String(activeIndex + 1).padStart(2, '0')}/${String(pages.length).padStart(2, '0')}` : String(activeIndex + 1).padStart(2, '0') }}</span>
             </header>
 
             <section class="card-content" v-html="pages[activeIndex].html" />
@@ -584,6 +583,10 @@ onBeforeUnmount(() => {
       <BackTop target="card-preview-scroll" :right="24" :bottom="24" />
     </div>
 
+    <div class="stage-page-indicator" aria-live="polite">
+      {{ activeIndex + 1 }} / {{ pages.length }}
+    </div>
+
     <article
       class="xiaohongshu-card measurement-card"
       :class="[
@@ -595,8 +598,8 @@ onBeforeUnmount(() => {
       aria-hidden="true"
     >
       <header class="card-page-header">
-        <span>Longform Card</span>
-        <span>00</span>
+        <span>{{ cardTemplate === 'note' ? '阅读进度' : 'Longform Card' }}</span>
+        <span>{{ cardTemplate === 'note' ? '00/00' : '00' }}</span>
       </header>
       <section ref="measurementContentRef" class="card-content" />
       <footer class="card-page-footer">
@@ -609,6 +612,7 @@ onBeforeUnmount(() => {
 
 <style lang="less" scoped>
 .card-mode-preview {
+  position: relative;
   background:
     radial-gradient(circle at 20% 10%, rgb(255 248 238 / 0.9), transparent 28%),
     linear-gradient(135deg, #f7f5f0 0%, #eef4f2 45%, #f7f8fb 100%);
@@ -662,23 +666,35 @@ onBeforeUnmount(() => {
 }
 
 .card-toolbar {
+  box-sizing: border-box;
   min-height: 40px;
+  column-gap: 14px;
+  padding-right: 12px;
+  padding-left: 12px;
+}
+
+.toolbar-options,
+.toolbar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .toolbar-select-label {
   display: inline-flex;
-  min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
   white-space: nowrap;
 }
 
 .toolbar-select {
+  box-sizing: border-box;
   height: 28px;
   border: 1px solid hsl(var(--border));
   border-radius: 6px;
   background: hsl(var(--background));
-  padding: 0 24px 0 8px;
+  padding: 0 30px 0 10px;
   color: hsl(var(--foreground));
   font-weight: 650;
   outline: none;
@@ -694,12 +710,31 @@ onBeforeUnmount(() => {
 }
 
 .ratio-select {
-  width: 68px;
+  width: 72px;
 }
 
 .toolbar-actions {
-  margin-left: auto;
   white-space: nowrap;
+}
+
+.stage-page-indicator {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  min-width: 54px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--background) / 88%);
+  padding: 5px 10px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  text-align: center;
+  box-shadow: 0 6px 18px rgb(15 23 42 / 10%);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
 }
 
 .toolbar-action-button {
@@ -837,22 +872,22 @@ onBeforeUnmount(() => {
 .note-template {
   display: flex;
   flex-direction: column;
-  border-color: color-mix(in srgb, var(--card-primary, #5d8d7b) 28%, #dfe8ec);
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.88), rgb(255 250 252 / 0.98)),
-    radial-gradient(circle at 85% 10%, color-mix(in srgb, var(--card-primary, #5d8d7b) 18%, white) 0, transparent 32%),
-    #fbfcfd;
+  border-color: rgb(61 47 23 / 12%);
+  border-radius: 2px;
+  background: #f6f5e3;
   padding: var(--card-page-padding-top, 26px) var(--card-page-padding-x, 26px) var(--card-page-padding-bottom, 20px);
-  box-shadow: 0 24px 70px color-mix(in srgb, var(--card-primary, #5d8d7b) 18%, transparent);
+  box-shadow: 0 24px 64px rgb(61 47 23 / 14%);
 }
 
-.note-template .card-page-header,
-.note-template .card-page-footer {
-  color: var(--card-primary, #5d8d7b);
+.note-template .card-page-header {
+  color: rgb(0 0 0 / 50%);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .note-template .card-page-footer {
-  border-top-color: color-mix(in srgb, var(--card-primary, #5d8d7b) 20%, #e5ecef);
+  display: none;
 }
 
 .card-page-header,
@@ -1038,57 +1073,92 @@ onBeforeUnmount(() => {
 
 .note-template :deep(.card-content) {
   h1 {
-    color: #2b2527;
-    font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 2));
+    margin-bottom: 36px;
+    color: #1d2129;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 2.5));
+    font-weight: 850;
+    line-height: 1.22;
   }
 
   h2 {
-    display: inline-block;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--card-primary, #5d8d7b) 14%, white);
-    padding: 7px 13px;
-    color: var(--card-primary, #5d8d7b);
-    font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 1.25));
+    margin-bottom: 24px;
+    color: #1d2129;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 1.5));
+    font-weight: 850;
+    line-height: 1.3;
   }
 
   h3 {
-    color: var(--card-primary, #5d8d7b);
+    display: inline;
+    color: #1d2129;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h3-scale, 1.25));
+    font-weight: 850;
+    line-height: 1.45;
+    background: linear-gradient(transparent 58%, rgb(0 0 0 / 18%) 58%);
   }
 
   p {
-    color: #3d3437;
+    color: #1d2129;
     font-size: var(--card-font-size, 16px);
   }
 
   strong {
-    border-radius: 5px;
-    background: linear-gradient(transparent 58%, color-mix(in srgb, var(--card-primary, #5d8d7b) 20%, white) 58%);
-    color: #1f1d1c;
+    background: linear-gradient(transparent 62%, color-mix(in srgb, var(--card-primary, #715b32) 20%, transparent) 62%);
+    color: #1d2129;
+    font-weight: 850;
   }
 
   blockquote {
+    position: relative;
+    margin-top: 42px;
     border-left: 0;
     border-radius: 8px;
-    background: color-mix(in srgb, var(--card-primary, #5d8d7b) 10%, white);
-    padding: 13px 15px;
+    background: rgb(61 47 23 / 7%);
+    padding: 14px 10px;
+
+    &::before {
+      position: absolute;
+      bottom: calc(100% + 12px);
+      left: 5px;
+      color: rgb(0 0 0 / 50%);
+      content: '“';
+      font-family: Georgia, serif;
+      font-size: 38px;
+      font-weight: 800;
+      line-height: 1;
+    }
   }
 
   blockquote p {
-    color: color-mix(in srgb, var(--card-primary, #5d8d7b) 75%, #2b2527);
+    color: #1d2129;
+    font-weight: 400;
   }
 
   ul,
   ol {
-    padding-left: 18px;
+    margin-top: 20px;
+    padding-left: 22px;
+    color: #1d2129;
+    line-height: 2;
   }
 
   li::marker {
-    color: var(--card-primary, #5d8d7b);
+    color: #1d2129;
   }
 
   code {
-    background: color-mix(in srgb, var(--card-primary, #5d8d7b) 12%, white);
-    color: var(--card-primary, #5d8d7b);
+    background: rgb(61 47 23 / 9%);
+    color: #1d2129;
+  }
+
+  img {
+    border-radius: 0;
+    filter: saturate(0.82) sepia(0.08);
+  }
+
+  pre {
+    background: #292923;
+    color: #f6f5e3;
   }
 }
 

@@ -15,6 +15,7 @@ import { altSign, ctrlSign, shiftSign } from '@md/shared/configs'
 import { redoAction, undoAction } from '@md/shared/editor'
 import { useEditorDocumentActions } from '@/composables/useEditorDocumentActions'
 import { copyPlain, readPlainFromClipboard } from '@/lib/browser/clipboard'
+import { structurePlainTextForCards } from '@/lib/cards/plain-text-to-markdown'
 import { useEditorStore } from '@/stores/editor'
 import { useUIStore } from '@/stores/ui'
 
@@ -43,8 +44,13 @@ async function copyToClipboard() {
 
 async function pasteFromClipboard() {
   const text = await readPlainFromClipboard()
-  if (text !== null)
-    editorStore.replaceSelection(text)
+  if (text === null)
+    return
+
+  const structured = uiStore.previewMode === `cards` ? structurePlainTextForCards(text) : null
+  editorStore.replaceSelection(structured?.markdown ?? text)
+  if (structured)
+    toast.success(`已识别标题、列表与引用结构`)
 }
 
 function undo() {
