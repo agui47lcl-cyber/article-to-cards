@@ -39,12 +39,19 @@ function createExportHost(card: HTMLElement) {
 
 function updateCardClone(clone: HTMLElement, page: CardPage, index: number, total: number) {
   const pageNumber = String(index + 1).padStart(2, `0`)
+  const totalPages = String(total).padStart(2, `0`)
   const headerNumber = clone.querySelector(`.card-page-header span:last-child`)
   const content = clone.querySelector(`.card-content`)
   const footerNumber = clone.querySelector(`.card-page-footer span:last-child`)
 
-  if (headerNumber)
-    headerNumber.textContent = pageNumber
+  clone.classList.toggle(`is-cover-page`, index === 0)
+  if (headerNumber) {
+    const usesReadingProgress = clone.matches(`.note-template, .dust-template, .green-template`)
+    const usesSpacedProgress = clone.matches(`.dust-template, .green-template`)
+    headerNumber.textContent = usesReadingProgress
+      ? usesSpacedProgress ? `${pageNumber} / ${totalPages}` : `${pageNumber}/${totalPages}`
+      : pageNumber
+  }
   if (content)
     content.innerHTML = page.html
   if (footerNumber)

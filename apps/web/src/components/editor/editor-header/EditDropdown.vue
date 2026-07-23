@@ -14,8 +14,8 @@ import {
 import { altSign, ctrlSign, shiftSign } from '@md/shared/configs'
 import { redoAction, undoAction } from '@md/shared/editor'
 import { useEditorDocumentActions } from '@/composables/useEditorDocumentActions'
-import { copyPlain, readPlainFromClipboard } from '@/lib/browser/clipboard'
-import { structurePlainTextForCards } from '@/lib/cards/plain-text-to-markdown'
+import { copyPlain, readContentFromClipboard } from '@/lib/browser/clipboard'
+import { convertPastedContentToMarkdown } from '@/lib/cards/rich-text-to-markdown'
 import { useEditorStore } from '@/stores/editor'
 import { useUIStore } from '@/stores/ui'
 
@@ -43,13 +43,15 @@ async function copyToClipboard() {
 }
 
 async function pasteFromClipboard() {
-  const text = await readPlainFromClipboard()
-  if (text === null)
+  const content = await readContentFromClipboard()
+  if (content === null)
     return
 
-  const structured = uiStore.previewMode === `cards` ? structurePlainTextForCards(text) : null
-  editorStore.replaceSelection(structured?.markdown ?? text)
-  if (structured)
+  const converted = uiStore.previewMode === `cards` ? convertPastedContentToMarkdown(content) : null
+  editorStore.replaceSelection(converted?.markdown ?? content.text)
+  if (converted?.source === `html`)
+    toast.success(`已将长文格式转换为 Markdown`)
+  else if (converted)
     toast.success(`已识别标题、列表与引用结构`)
 }
 

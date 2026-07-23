@@ -47,4 +47,37 @@ AI 正在改变内容创作，但真正重要的是建立稳定的工作流。
   it(`does not force structure onto an ordinary paragraph`, () => {
     expect(structurePlainTextForCards(`这是一段已经完整表达意思的普通正文。`)).toBeNull()
   })
+
+  it(`classifies unmarked sections around existing Markdown blocks`, () => {
+    const result = structurePlainTextForCards(`# 已有大标题
+
+这是一段用于介绍背景的正文内容，长度足够说明它不是标题。
+
+**核心方法**
+
+这里是核心方法对应的详细说明，包含完整的上下文和执行建议。
+
+- 已有列表项`)
+
+    expect(result?.markdown).toContain(`## **核心方法**`)
+    expect(result?.markdown).toContain(`- 已有列表项`)
+  })
+
+  it(`keeps fenced code untouched while recognizing surrounding sections`, () => {
+    const result = structurePlainTextForCards(`工作流说明
+
+正文部分用于介绍下面的代码示例。
+
+\`\`\`text
+这不是标题
+• 这也不是列表
+\`\`\`
+
+总结
+
+这里是最后一段足够长的总结说明文字。`)
+
+    expect(result?.markdown).toContain(`\`\`\`text\n这不是标题\n• 这也不是列表\n\`\`\``)
+    expect(result?.markdown).toContain(`## 总结`)
+  })
 })

@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { AlertTriangle, Download, Files, SplitSquareHorizontal } from '@lucide/vue'
+import dustDotUrl from '@/assets/images/card-dust-dot.svg'
+import dustLineUrl from '@/assets/images/card-dust-line.svg'
+import dustQuoteMarkUrl from '@/assets/images/card-dust-quote.svg'
+import dustTextureUrl from '@/assets/images/card-dust-texture.png'
+import greenDotUrl from '@/assets/images/card-green-dot.svg'
+import greenLineUrl from '@/assets/images/card-green-line.svg'
+import greenPlantUrl from '@/assets/images/card-green-plant.png'
+import greenQuoteMarkUrl from '@/assets/images/card-green-quote.svg'
+import greenTextureUrl from '@/assets/images/card-green-texture.png'
+import quoteMarkUrl from '@/assets/images/card-quote-mark.svg'
 import type { CardPage } from '@/lib/cards/markdown-to-cards'
 import { exportLongformCardImage, exportLongformCardImages } from '@/services/export/card-images'
+import { splitCardCoverSource } from '@/lib/cards/card-cover'
 import {
   cardRatios,
-  cardTemplates,
   getCardRatio,
   getCardTemplate,
   getCardTemplateStyleVariables,
@@ -19,11 +29,13 @@ import {
   splitManualCardSections,
 } from '@/lib/cards/markdown-to-cards'
 import { useEditorStore } from '@/stores/editor'
+import { useAuthStore } from '@/stores/auth'
 import { usePostStore } from '@/stores/post'
 import { useThemeStore } from '@/stores/theme'
 import { useUIStore } from '@/stores/ui'
 
 const editorStore = useEditorStore()
+const authStore = useAuthStore()
 const postStore = usePostStore()
 const themeStore = useThemeStore()
 const uiStore = useUIStore()
@@ -46,10 +58,52 @@ const pageSafeGap = 14
 const manualCardBreakRe = /^\s*---card---\s*$/gim
 let paginationRun = 0
 
-const templateOptions = Object.values(cardTemplates)
 const ratioOptions = Object.values(cardRatios)
 const activeTemplate = computed(() => getCardTemplate(cardTemplate.value))
 const activeRatio = computed(() => getCardRatio(cardRatio.value))
+const usesReadingProgress = computed(() => cardTemplate.value !== `clean`)
+const usesCoverDecoration = computed(() => cardTemplate.value === `dust` || cardTemplate.value === `green`)
+const coverAuthorText = computed(() => `作者：${authStore.user?.name || authStore.user?.login || `阿鬼`}`)
+const coverDateText = computed(() => {
+  const rawDate = currentPost.value?.updateDatetime
+  const date = rawDate instanceof Date ? rawDate : new Date(rawDate ?? Date.now())
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
+  return `日期： ${safeDate.getFullYear()} 年 ${safeDate.getMonth() + 1} 月`
+})
+const pageIndicatorText = computed(() => {
+  const current = String(activeIndex.value + 1).padStart(2, `0`)
+  const total = String(pages.value.length).padStart(2, `0`)
+  return usesCoverDecoration.value ? `${current} / ${total}` : `${current}/${total}`
+})
+const templateAssets = computed(() => {
+  if (cardTemplate.value === `dust`) {
+    return {
+      texture: dustTextureUrl,
+      textureOpacity: 0.1,
+      quoteMark: dustQuoteMarkUrl,
+      coverLine: dustLineUrl,
+      coverDot: dustDotUrl,
+    }
+  }
+
+  if (cardTemplate.value === `green`) {
+    return {
+      texture: greenTextureUrl,
+      textureOpacity: 0.2,
+      quoteMark: greenQuoteMarkUrl,
+      coverLine: greenLineUrl,
+      coverDot: greenDotUrl,
+    }
+  }
+
+  return {
+    texture: ``,
+    textureOpacity: 0,
+    quoteMark: quoteMarkUrl,
+    coverLine: ``,
+    coverDot: ``,
+  }
+})
 const themeClass = computed(() => `theme-${theme.value}`)
 const cardBaseWidth = computed(() => activeRatio.value.width)
 const cardBaseHeight = computed(() => activeRatio.value.height)
@@ -62,6 +116,12 @@ const cardStyle = computed(() => ({
   '--card-ratio-id': activeRatio.value.id,
   '--card-width': `${cardBaseWidth.value}px`,
   '--card-height': `${cardBaseHeight.value}px`,
+  '--card-quote-mark-image': `url("${templateAssets.value.quoteMark}")`,
+  '--card-texture-image': templateAssets.value.texture ? `url("${templateAssets.value.texture}")` : `none`,
+  '--card-texture-opacity': templateAssets.value.textureOpacity,
+  '--card-cover-line-image': templateAssets.value.coverLine ? `url("${templateAssets.value.coverLine}")` : `none`,
+  '--card-cover-dot-image': templateAssets.value.coverDot ? `url("${templateAssets.value.coverDot}")` : `none`,
+  '--card-cover-plant-image': cardTemplate.value === `green` ? `url("${greenPlantUrl}")` : `none`,
 }))
 const cardShellStyle = computed(() => ({
   width: `${cardBaseWidth.value * previewScale.value}px`,
@@ -319,18 +379,37 @@ function compactMeasuredPages(pageMarkdowns: string[]) {
 
 function buildMeasuredPages(markdown: string) {
   const source = normalizeCardSource(markdown)
-  const hasManualBreaks = respectManualBreaks.value && hasManualCardBreaks(source)
+  const coverSource = usesCoverDecoration.value
+    ? splitCardCoverSource(source, currentPost.value?.title ?? `长图文卡片`)
+    : null
+  const bodySource = coverSource?.bodyMarkdown ?? source
+  const hasManualBreaks = respectManualBreaks.value && hasManualCardBreaks(bodySource)
   const sections = hasManualBreaks
-    ? splitManualCardSections(source)
-    : [source.replace(manualCardBreakRe, `\n\n`)]
+    ? splitManualCardSections(bodySource)
+    : bodySource ? [bodySource.replace(manualCardBreakRe, `\n\n`)] : []
   const pageMarkdowns = sections.flatMap(section => compactMeasuredPages(paginateMeasuredBlocks(splitCardRawBlocks(section))))
   const pageSource = hasManualBreaks ? `mixed` : `auto`
+  const allPageMarkdowns = coverSource
+    ? [coverSource.coverMarkdown, ...pageMarkdowns]
+    : pageMarkdowns
 
-  return pageMarkdowns.map((pageMarkdown, index) => createCardPage(pageMarkdown, index, pageSource))
+  return allPageMarkdowns.map((pageMarkdown, index) => createCardPage(pageMarkdown, index, pageSource))
+}
+
+function buildInitialPages(markdown: string) {
+  if (!usesCoverDecoration.value)
+    return buildCardPages(markdown)
+
+  const coverSource = splitCardCoverSource(markdown, currentPost.value?.title ?? `长图文卡片`)
+  const bodyPages = coverSource.bodyMarkdown ? buildCardPages(coverSource.bodyMarkdown) : []
+  return [
+    createCardPage(coverSource.coverMarkdown, 0, `auto`),
+    ...bodyPages.map((page, index) => createCardPage(page.markdown, index + 1, page.source)),
+  ]
 }
 
 function refreshPages() {
-  pages.value = buildCardPages(sourceContent.value)
+  pages.value = buildInitialPages(sourceContent.value)
   isPaginating.value = true
   const run = ++paginationRun
 
@@ -488,18 +567,6 @@ onBeforeUnmount(() => {
         <div class="card-toolbar flex w-full flex-nowrap items-center justify-center rounded border bg-background px-3 py-2 text-xs text-muted-foreground">
           <span class="toolbar-options">
             <label class="toolbar-select-label">
-              <span class="sr-only">模板</span>
-              <select v-model="cardTemplate" class="toolbar-select template-select" aria-label="长图文模板">
-                <option
-                  v-for="option in templateOptions"
-                  :key="option.id"
-                  :value="option.id"
-                >
-                  {{ option.name }}
-                </option>
-              </select>
-            </label>
-            <label class="toolbar-select-label">
               <span class="sr-only">比例</span>
               <select v-model="cardRatio" class="toolbar-select ratio-select" aria-label="长图文比例">
                 <option
@@ -542,15 +609,27 @@ onBeforeUnmount(() => {
               activeTemplate.className,
               cardRatio === '3-4' ? 'ratio-3-4' : 'ratio-4-5',
               themeClass,
+              { 'is-cover-page': activeIndex === 0 },
             ]"
             :style="scaledCardStyle"
           >
             <header class="card-page-header">
-              <span>{{ cardTemplate === 'note' ? '阅读进度' : 'Longform Card' }}</span>
-              <span>{{ cardTemplate === 'note' ? `${String(activeIndex + 1).padStart(2, '0')}/${String(pages.length).padStart(2, '0')}` : String(activeIndex + 1).padStart(2, '0') }}</span>
+              <span>{{ usesReadingProgress ? '阅读进度' : 'Longform Card' }}</span>
+              <span>{{ usesReadingProgress ? pageIndicatorText : String(activeIndex + 1).padStart(2, '0') }}</span>
             </header>
 
+            <span v-if="usesCoverDecoration" class="card-cover-motif" aria-hidden="true">
+              <span class="card-cover-line" />
+              <span class="card-cover-dot" />
+              <span v-if="cardTemplate === 'green'" class="card-cover-plant" />
+            </span>
+
             <section class="card-content" v-html="pages[activeIndex].html" />
+
+            <div v-if="usesCoverDecoration" class="card-cover-meta">
+              <span>{{ coverAuthorText }}</span>
+              <span>{{ coverDateText }}</span>
+            </div>
 
             <footer class="card-page-footer">
               <span>Markdown to Cards</span>
@@ -598,8 +677,8 @@ onBeforeUnmount(() => {
       aria-hidden="true"
     >
       <header class="card-page-header">
-        <span>{{ cardTemplate === 'note' ? '阅读进度' : 'Longform Card' }}</span>
-        <span>{{ cardTemplate === 'note' ? '00/00' : '00' }}</span>
+        <span>{{ usesReadingProgress ? '阅读进度' : 'Longform Card' }}</span>
+        <span>{{ usesReadingProgress ? '00/00' : '00' }}</span>
       </header>
       <section ref="measurementContentRef" class="card-content" />
       <footer class="card-page-footer">
@@ -703,10 +782,6 @@ onBeforeUnmount(() => {
   &:focus-visible {
     border-color: var(--card-primary, #5d8d7b);
   }
-}
-
-.template-select {
-  width: 112px;
 }
 
 .ratio-select {
@@ -918,16 +993,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.measurement-card {
-  position: fixed;
-  top: 0;
-  left: -10000px;
-  z-index: -1;
-  visibility: hidden;
-  pointer-events: none;
-  transform: none;
-}
-
 .mobile-thumb-button {
   height: 34px;
   border-radius: 8px;
@@ -1073,7 +1138,7 @@ onBeforeUnmount(() => {
 
 .note-template :deep(.card-content) {
   h1 {
-    margin-bottom: 36px;
+    margin-bottom: var(--card-title-body-gap, 37.33px);
     color: #1d2129;
     font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 2.5));
     font-weight: 850;
@@ -1081,7 +1146,7 @@ onBeforeUnmount(() => {
   }
 
   h2 {
-    margin-bottom: 24px;
+    margin: var(--card-title-body-gap, 37.33px) 0;
     color: #1d2129;
     font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 1.5));
     font-weight: 850;
@@ -1120,12 +1185,10 @@ onBeforeUnmount(() => {
       position: absolute;
       bottom: calc(100% + 12px);
       left: 5px;
-      color: rgb(0 0 0 / 50%);
-      content: '“';
-      font-family: Georgia, serif;
-      font-size: 38px;
-      font-weight: 800;
-      line-height: 1;
+      width: 29px;
+      height: 18px;
+      background: var(--card-quote-mark-image) center / 100% 100% no-repeat;
+      content: '';
     }
   }
 
@@ -1171,5 +1234,389 @@ onBeforeUnmount(() => {
   border-radius: 2px;
   background: #ffffff;
   box-shadow: 0 18px 48px color-mix(in srgb, var(--card-primary, #5d8d7b) 10%, transparent);
+}
+
+.dust-template,
+.green-template {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  padding: var(--card-page-padding-top, 23.33px) var(--card-page-padding-x, 37.33px) var(--card-page-padding-bottom, 23.33px);
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif;
+  font-weight: 400;
+  box-shadow: 0 24px 64px rgb(30 22 16 / 18%);
+}
+
+.dust-template {
+  background: #8a1e1e;
+  color: rgb(255 255 255 / 90%);
+}
+
+.green-template {
+  background: #acc594;
+  color: rgb(0 0 0 / 90%);
+}
+
+.dust-template::before,
+.green-template::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: var(--card-texture-image) center / cover no-repeat;
+  content: '';
+  opacity: var(--card-texture-opacity, 0.1);
+  pointer-events: none;
+}
+
+.dust-template .card-page-header,
+.green-template .card-page-header {
+  position: relative;
+  z-index: 2;
+  font-family: inherit;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.dust-template .card-page-header {
+  color: rgb(255 255 255 / 60%);
+}
+
+.green-template .card-page-header {
+  color: rgb(0 0 0 / 60%);
+}
+
+.dust-template .card-page-footer,
+.green-template .card-page-footer {
+  display: none;
+}
+
+.dust-template .card-content,
+.green-template .card-content {
+  position: relative;
+  z-index: 2;
+}
+
+.dust-template :deep(.card-content *),
+.green-template :deep(.card-content *) {
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif !important;
+}
+
+.card-cover-motif {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+}
+
+.dust-template.is-cover-page .card-cover-motif,
+.green-template.is-cover-page .card-cover-motif {
+  display: block;
+}
+
+.card-cover-meta {
+  display: none;
+}
+
+.dust-template.is-cover-page .card-cover-meta,
+.green-template.is-cover-page .card-cover-meta {
+  position: absolute;
+  z-index: 2;
+  right: calc(80px * 420 / 900);
+  bottom: calc(80px * 420 / 900);
+  left: calc(80px * 420 / 900);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif;
+  font-size: calc(32px * 420 / 900);
+  font-weight: 400;
+  line-height: normal;
+  white-space: nowrap;
+}
+
+.dust-template.is-cover-page .card-cover-meta {
+  color: rgb(255 255 255 / 60%);
+}
+
+.green-template.is-cover-page .card-cover-meta {
+  color: rgb(0 0 0 / 60%);
+}
+
+.card-cover-line,
+.card-cover-dot,
+.card-cover-plant {
+  position: absolute;
+  display: block;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+
+.card-cover-line {
+  background-image: var(--card-cover-line-image);
+  transform-origin: center;
+}
+
+.card-cover-dot {
+  width: calc(44px * 420 / 900);
+  height: calc(44px * 420 / 900);
+  background-image: var(--card-cover-dot-image);
+}
+
+.card-cover-plant {
+  top: calc(728px * 420 / 900);
+  left: calc(349px * 420 / 900);
+  width: calc(664px * 420 / 900);
+  height: calc(470px * 420 / 900);
+  background-image: var(--card-cover-plant-image);
+  mix-blend-mode: difference;
+  opacity: 0.22;
+  transform: rotate(72.58deg);
+  transform-origin: center;
+}
+
+.dust-template.is-cover-page .card-cover-line {
+  top: calc(636px * 420 / 900);
+  left: calc(335px * 420 / 900);
+  width: calc(581px * 420 / 900);
+  height: calc(5px * 420 / 900);
+  transform: rotate(118.02deg);
+}
+
+.dust-template.is-cover-page .card-cover-dot {
+  top: calc(851px * 420 / 900);
+  left: calc(723px * 420 / 900);
+}
+
+.green-template.is-cover-page .card-cover-line {
+  top: calc(578px * 420 / 900);
+  left: calc(406px * 420 / 900);
+  width: calc(542px * 420 / 900);
+  height: calc(5px * 420 / 900);
+  transform: rotate(104.65deg);
+}
+
+.green-template.is-cover-page .card-cover-dot {
+  top: calc(810px * 420 / 900);
+  left: calc(701px * 420 / 900);
+}
+
+.dust-template.is-cover-page .card-content,
+.green-template.is-cover-page .card-content {
+  position: absolute;
+  z-index: 2;
+  min-height: 0;
+  overflow: visible;
+}
+
+.dust-template.is-cover-page .card-content {
+  top: calc(253px * 420 / 900);
+  left: calc(80px * 420 / 900);
+  width: calc(521px * 420 / 900);
+}
+
+.green-template.is-cover-page .card-content {
+  top: calc(165px * 420 / 900);
+  left: calc(80px * 420 / 900);
+  width: calc(484px * 420 / 900);
+  height: calc(632px * 420 / 900);
+}
+
+.dust-template.is-cover-page :deep(.card-content h1) {
+  width: 100%;
+  margin: 0;
+  font-size: calc(100px * 420 / 900);
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.green-template.is-cover-page :deep(.card-content h1) {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  font-size: calc(110px * 420 / 900);
+  font-weight: 400;
+  line-height: calc(120 / 110);
+  text-align: center;
+  text-orientation: mixed;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  writing-mode: vertical-lr;
+}
+
+.dust-template :deep(.card-content),
+.green-template :deep(.card-content) {
+  h1,
+  h2,
+  h3,
+  p,
+  ul,
+  ol,
+  blockquote,
+  code,
+  pre {
+    font-family: inherit;
+    font-weight: 400;
+  }
+
+  h1 {
+    margin: 0 0 var(--card-title-body-gap, 37.33px);
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 2.5));
+    line-height: 1.25;
+  }
+
+  h2 {
+    margin: 0 0 var(--card-title-body-gap, 37.33px);
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 2));
+    line-height: 1.3;
+  }
+
+  h2:not(:first-child) {
+    margin-top: var(--card-title-body-gap, 37.33px);
+  }
+
+  h3 {
+    display: inline;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h3-scale, 1.25));
+    line-height: 1.45;
+  }
+
+  p {
+    font-size: var(--card-font-size, 16px);
+    line-height: var(--card-body-line-height, 1.5);
+  }
+
+  ul,
+  ol {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    padding-left: 22px;
+    font-size: var(--card-font-size, 16px);
+    line-height: var(--card-body-line-height, 1.5);
+  }
+
+  li + li {
+    margin-top: 4px;
+  }
+
+  blockquote {
+    position: relative;
+    margin: 42px 0 var(--card-paragraph-gap, 18.67px);
+    border: 0;
+    border-radius: 7.47px;
+    padding: 9.33px;
+
+    &::before {
+      position: absolute;
+      bottom: calc(100% + 12px);
+      left: 5px;
+      width: 29px;
+      height: 18px;
+      background: var(--card-quote-mark-image) center / 100% 100% no-repeat;
+      content: '';
+    }
+  }
+
+  blockquote p {
+    margin: 0;
+    font-weight: 400;
+  }
+
+  img {
+    border-radius: 0;
+  }
+
+  code {
+    border-radius: 2px;
+  }
+}
+
+.dust-template :deep(.card-content) {
+  h1,
+  h2,
+  h3,
+  p,
+  ul,
+  ol,
+  blockquote p,
+  strong,
+  code {
+    color: rgb(255 255 255 / 90%);
+  }
+
+  h3,
+  strong {
+    background: linear-gradient(transparent 58%, rgb(255 255 14 / 22%) 58%);
+  }
+
+  blockquote {
+    background: rgb(255 255 14 / 12%);
+  }
+
+  li::marker {
+    color: rgb(255 255 255 / 90%);
+  }
+
+  code {
+    background: rgb(255 255 255 / 12%);
+  }
+
+  pre {
+    background: rgb(38 10 10 / 72%);
+    color: rgb(255 255 255 / 90%);
+  }
+}
+
+.green-template :deep(.card-content) {
+  h1,
+  h2,
+  h3,
+  p,
+  ul,
+  ol,
+  blockquote p,
+  strong,
+  code {
+    color: rgb(0 0 0 / 90%);
+  }
+
+  h3,
+  strong {
+    background: linear-gradient(transparent 58%, rgb(0 0 0 / 12%) 58%);
+  }
+
+  blockquote {
+    background: rgb(0 0 0 / 7%);
+  }
+
+  li::marker {
+    color: rgb(0 0 0 / 90%);
+  }
+
+  code {
+    background: rgb(0 0 0 / 9%);
+  }
+
+  pre {
+    background: rgb(20 38 16 / 76%);
+    color: rgb(255 255 255 / 90%);
+  }
+}
+
+// 必须放在模板样式之后，避免模板的 position: relative 让测量卡片参与预览区布局。
+.measurement-card {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  z-index: -1;
+  visibility: hidden;
+  pointer-events: none;
+  transform: none;
 }
 </style>

@@ -1,6 +1,14 @@
 @import 'tailwindcss' source('../');
 @import 'tw-animate-css';
 
+@font-face {
+  font-family: 'Dinglie Songti';
+  src: url('./fonts/dinglie-songti.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 @source '../../../../packages/shared/src';
 
 @custom-variant dark (&:is(.dark *));
