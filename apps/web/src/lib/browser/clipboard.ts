@@ -61,3 +61,30 @@ export async function readPlainFromClipboard(): Promise<string | null> {
     return null
   }
 }
+
+export async function readContentFromClipboard(): Promise<{ html?: string, text: string } | null> {
+  try {
+    if (window.isSecureContext && navigator.clipboard?.read) {
+      const items = await navigator.clipboard.read()
+      let html: string | undefined
+      let text = ``
+
+      for (const item of items) {
+        if (!html && item.types.includes(`text/html`))
+          html = await (await item.getType(`text/html`)).text()
+        if (!text && item.types.includes(`text/plain`))
+          text = await (await item.getType(`text/plain`)).text()
+      }
+
+      if (html || text)
+        return { html, text }
+    }
+
+    return { text: await navigator.clipboard.readText() }
+  }
+  catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    toast.error(t('toast.pasteFailed', { message }))
+    return null
+  }
+}

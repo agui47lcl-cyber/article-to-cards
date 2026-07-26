@@ -1,13 +1,52 @@
 <script setup lang="ts">
-import { AlertTriangle, LayoutTemplate, SplitSquareHorizontal } from '@lucide/vue'
+/**
+ * [INPUT]: 依赖卡片模板与分页模型、文学封面摘录及日期题记、编辑器和主题状态、图片导出服务及模板视觉资源
+ * [OUTPUT]: 对外提供公众号编辑器中的长图文分页预览、字体就绪后渲染的文学封面、模板切换、溢出检测与图片下载面板
+ * [POS]: editor 组件域的长图文预览核心，承接 Markdown 内容并协调封面策略、字体加载、测量分页、卡片渲染和导出
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+import { AlertTriangle, Download, Files, SplitSquareHorizontal } from '@lucide/vue'
+import dustDotUrl from '@/assets/images/card-dust-dot.svg'
+import dustLineUrl from '@/assets/images/card-dust-line.svg'
+import dustQuoteMarkUrl from '@/assets/images/card-dust-quote.svg'
+import dustTextureUrl from '@/assets/images/card-dust-texture.png'
+import greenDotUrl from '@/assets/images/card-green-dot.svg'
+import greenLineUrl from '@/assets/images/card-green-line.svg'
+import greenPlantUrl from '@/assets/images/card-green-plant.png'
+import greenQuoteMarkUrl from '@/assets/images/card-green-quote.svg'
+import greenTextureUrl from '@/assets/images/card-green-texture.png'
+import literaryTextureUrl from '@/assets/images/card-literary-texture.jpg'
+import quoteMarkUrl from '@/assets/images/card-quote-mark.svg'
 import type { CardPage } from '@/lib/cards/markdown-to-cards'
-import { buildCardPages } from '@/lib/cards/markdown-to-cards'
+import { exportLongformCardImage, exportLongformCardImages } from '@/services/export/card-images'
+import {
+  formatLiteraryCoverDate,
+  splitCardCoverSource,
+  splitLiteraryCardCoverSource,
+} from '@/lib/cards/card-cover'
+import {
+  cardRatios,
+  getCardRatio,
+  getCardTemplate,
+  getCardTemplateStyleVariables,
+} from '@/lib/cards/card-templates'
+import {
+  buildCardPages,
+  createCardPage,
+  hasManualCardBreaks,
+  normalizeCardSource,
+  renderCardMarkdown,
+  splitCardRawBlocks,
+  splitManualCardSections,
+} from '@/lib/cards/markdown-to-cards'
 import { useEditorStore } from '@/stores/editor'
+import { useAuthStore } from '@/stores/auth'
 import { usePostStore } from '@/stores/post'
 import { useThemeStore } from '@/stores/theme'
 import { useUIStore } from '@/stores/ui'
 
 const editorStore = useEditorStore()
+const authStore = useAuthStore()
 const postStore = usePostStore()
 const themeStore = useThemeStore()
 const uiStore = useUIStore()
@@ -20,24 +59,103 @@ const pages = ref<CardPage[]>(buildCardPages(sourceContent.value))
 const activeIndex = ref(0)
 const cardStageInnerRef = useTemplateRef<HTMLElement>(`cardStageInnerRef`)
 const activeCardRef = useTemplateRef<HTMLElement>(`activeCardRef`)
+const measurementContentRef = useTemplateRef<HTMLElement>(`measurementContentRef`)
 const isOverflowing = ref(false)
+const isPaginating = ref(false)
+const isExporting = ref(false)
+const respectManualBreaks = ref(true)
 const previewScale = ref(1)
-const cardBaseWidth = 420
-const cardBaseHeight = computed(() => cardRatio.value === `3-4` ? 560 : 525)
+const pageSafeGap = 14
+const manualCardBreakRe = /^\s*---card---\s*$/gim
+let paginationRun = 0
 
-const templateLabel = computed(() => cardTemplate.value === `clean` ? `清爽白底` : `小红书笔记`)
-const ratioLabel = computed(() => cardRatio.value === `3-4` ? `3:4` : `4:5`)
-const pagingLabel = computed(() => pages.value[0]?.source === `auto` ? `自动分页` : `混合分页`)
+const ratioOptions = Object.values(cardRatios)
+const activeTemplate = computed(() => getCardTemplate(cardTemplate.value))
+const activeRatio = computed(() => getCardRatio(cardRatio.value))
+const usesReadingProgress = computed(() => cardTemplate.value !== `clean`)
+const usesSpecialCover = computed(() => [`dust`, `green`, `literary`].includes(cardTemplate.value))
+const usesLiteraryLayout = computed(() => cardTemplate.value === `literary`)
+const coverAuthorText = computed(() => {
+  const author = authStore.user?.name || authStore.user?.login || `阿鬼`
+  return usesLiteraryLayout.value ? author : `作者：${author}`
+})
+const coverDateText = computed(() => {
+  const rawDate = currentPost.value?.updateDatetime
+  const date = rawDate instanceof Date ? rawDate : new Date(rawDate ?? Date.now())
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
+  if (usesLiteraryLayout.value)
+    return formatLiteraryCoverDate(safeDate)
+
+  const dateText = `${safeDate.getFullYear()} 年 ${safeDate.getMonth() + 1} 月`
+  return `日期： ${dateText}`
+})
+const pageIndicatorText = computed(() => {
+  const current = String(activeIndex.value + 1).padStart(2, `0`)
+  const total = String(pages.value.length).padStart(2, `0`)
+  return cardTemplate.value === `dust` || cardTemplate.value === `green`
+    ? `${current} / ${total}`
+    : `${current}/${total}`
+})
+const templateAssets = computed(() => {
+  if (cardTemplate.value === `dust`) {
+    return {
+      texture: dustTextureUrl,
+      textureOpacity: 0.1,
+      quoteMark: dustQuoteMarkUrl,
+      coverLine: dustLineUrl,
+      coverDot: dustDotUrl,
+    }
+  }
+
+  if (cardTemplate.value === `green`) {
+    return {
+      texture: greenTextureUrl,
+      textureOpacity: 0.2,
+      quoteMark: greenQuoteMarkUrl,
+      coverLine: greenLineUrl,
+      coverDot: greenDotUrl,
+    }
+  }
+
+  if (cardTemplate.value === `literary`) {
+    return {
+      texture: literaryTextureUrl,
+      textureOpacity: 0.15,
+      quoteMark: ``,
+      coverLine: ``,
+      coverDot: ``,
+    }
+  }
+
+  return {
+    texture: ``,
+    textureOpacity: 0,
+    quoteMark: quoteMarkUrl,
+    coverLine: ``,
+    coverDot: ``,
+  }
+})
 const themeClass = computed(() => `theme-${theme.value}`)
+const cardBaseWidth = computed(() => activeRatio.value.width)
+const cardBaseHeight = computed(() => activeRatio.value.height)
 const cardStyle = computed(() => ({
+  ...getCardTemplateStyleVariables(activeTemplate.value),
   '--card-primary': primaryColor.value,
   '--card-font-family': fontFamily.value,
   '--card-font-size': fontSize.value,
-  '--card-width': `${cardBaseWidth}px`,
+  '--card-template-id': activeTemplate.value.id,
+  '--card-ratio-id': activeRatio.value.id,
+  '--card-width': `${cardBaseWidth.value}px`,
   '--card-height': `${cardBaseHeight.value}px`,
+  '--card-quote-mark-image': templateAssets.value.quoteMark ? `url("${templateAssets.value.quoteMark}")` : `none`,
+  '--card-texture-image': templateAssets.value.texture ? `url("${templateAssets.value.texture}")` : `none`,
+  '--card-texture-opacity': templateAssets.value.textureOpacity,
+  '--card-cover-line-image': templateAssets.value.coverLine ? `url("${templateAssets.value.coverLine}")` : `none`,
+  '--card-cover-dot-image': templateAssets.value.coverDot ? `url("${templateAssets.value.coverDot}")` : `none`,
+  '--card-cover-plant-image': cardTemplate.value === `green` ? `url("${greenPlantUrl}")` : `none`,
 }))
 const cardShellStyle = computed(() => ({
-  width: `${cardBaseWidth * previewScale.value}px`,
+  width: `${cardBaseWidth.value * previewScale.value}px`,
   height: `${cardBaseHeight.value * previewScale.value}px`,
 }))
 const scaledCardStyle = computed(() => ({
@@ -45,14 +163,369 @@ const scaledCardStyle = computed(() => ({
   transform: `scale(${previewScale.value})`,
 }))
 
+function joinBlocks(blocks: string[]) {
+  return blocks.map(block => block.trim()).filter(Boolean).join(`\n\n`)
+}
+
+function buildActiveCoverSource(markdown: string) {
+  if (!usesSpecialCover.value)
+    return null
+
+  const fallbackTitle = currentPost.value?.title ?? `长图文卡片`
+  return usesLiteraryLayout.value
+    ? splitLiteraryCardCoverSource(markdown, fallbackTitle)
+    : splitCardCoverSource(markdown, fallbackTitle)
+}
+
+function startsLiterarySection(block: string) {
+  return usesLiteraryLayout.value && /^\s{0,3}#{1,2}\s+/.test(block)
+}
+
+function measureFits(markdown: string) {
+  const content = measurementContentRef.value
+  if (!content)
+    return true
+
+  content.innerHTML = renderCardMarkdown(markdown)
+  if (content.clientHeight <= pageSafeGap)
+    return true
+
+  const contentTop = content.getBoundingClientRect().top
+  const bottom = Array.from(content.children).reduce((maxBottom, child) => {
+    return Math.max(maxBottom, child.getBoundingClientRect().bottom - contentTop)
+  }, 0)
+
+  return bottom <= content.clientHeight - pageSafeGap
+}
+
+function measureHeadWithContext(currentBlocks: string[], head: string) {
+  return measureFits(joinBlocks([...currentBlocks, head]))
+}
+
+function splitFencedCodeBlock(block: string, currentBlocks: string[] = []) {
+  const trimmed = block.trim()
+  const match = trimmed.match(/^(```[^\n]*)(?:\n([\s\S]*?))?\n```$/)
+  if (!match)
+    return null
+
+  const fenceStart = match[1]
+  const body = match[2] ?? ``
+  const lines = body.split(`\n`)
+  if (lines.length <= 1)
+    return null
+
+  let low = 1
+  let high = lines.length
+  let best = 0
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const head = `${fenceStart}\n${lines.slice(0, mid).join(`\n`)}\n\`\`\``
+
+    if (measureHeadWithContext(currentBlocks, head)) {
+      best = mid
+      low = mid + 1
+    }
+    else {
+      high = mid - 1
+    }
+  }
+
+  if (best <= 0)
+    return null
+
+  const head = `${fenceStart}\n${lines.slice(0, best).join(`\n`)}\n\`\`\``
+  const remaining = lines.slice(best).join(`\n`).trim()
+  const tail = remaining ? `${fenceStart}\n${remaining}\n\`\`\`` : ``
+
+  return { head, tail }
+}
+
+function splitLineBlock(block: string, currentBlocks: string[] = []) {
+  const lines = block.trim().split(`\n`)
+  if (lines.length <= 1)
+    return null
+
+  let low = 1
+  let high = lines.length
+  let best = 0
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const head = lines.slice(0, mid).join(`\n`)
+
+    if (measureHeadWithContext(currentBlocks, head)) {
+      best = mid
+      low = mid + 1
+    }
+    else {
+      high = mid - 1
+    }
+  }
+
+  if (best <= 0 || best >= lines.length)
+    return null
+
+  if (best === 1 && /^#{1,6}\s+/.test(lines[0].trim()))
+    return null
+
+  return {
+    head: lines.slice(0, best).join(`\n`),
+    tail: lines.slice(best).join(`\n`),
+  }
+}
+
+function getSplittableParagraph(block: string) {
+  const trimmed = block.trim()
+  if (
+    /^#{1,6}\s+/.test(trimmed)
+    || /^!\[[^\]]*\]\([^)]+\)/.test(trimmed)
+    || /^\|/.test(trimmed)
+  ) {
+    return null
+  }
+
+  const quote = trimmed.match(/^>\s*([\s\S]+)$/)
+  if (quote)
+    return { prefix: `> `, body: quote[1].replace(/\n>\s*/g, `\n`) }
+
+  if (/^(\s*[-*+]|\s*\d+\.)\s+/m.test(trimmed))
+    return null
+
+  return { prefix: ``, body: trimmed }
+}
+
+function splitParagraphBlock(block: string, currentBlocks: string[] = []) {
+  const splittable = getSplittableParagraph(block)
+  if (!splittable)
+    return null
+
+  const chars = Array.from(splittable.body)
+  if (chars.length <= 1)
+    return null
+
+  let low = 1
+  let high = chars.length
+  let best = 0
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const head = `${splittable.prefix}${chars.slice(0, mid).join(``).trim()}`
+
+    if (measureHeadWithContext(currentBlocks, head)) {
+      best = mid
+      low = mid + 1
+    }
+    else {
+      high = mid - 1
+    }
+  }
+
+  if (best <= 0 || best >= chars.length)
+    return null
+
+  const head = `${splittable.prefix}${chars.slice(0, best).join(``).trim()}`
+  const tailBody = chars.slice(best).join(``).trim()
+  const tail = tailBody ? `${splittable.prefix}${tailBody}` : ``
+
+  return { head, tail }
+}
+
+function splitBlockToFit(block: string, currentBlocks: string[] = []) {
+  return splitFencedCodeBlock(block, currentBlocks)
+    || splitLineBlock(block, currentBlocks)
+    || splitParagraphBlock(block, currentBlocks)
+}
+
+function paginateMeasuredBlocks(blocks: string[]) {
+  const pageMarkdowns: string[] = []
+  const queue = blocks.map(block => block.trim()).filter(Boolean)
+  let currentBlocks: string[] = []
+  let guard = 0
+
+  while (queue.length && guard < 2000) {
+    guard += 1
+    const block = queue.shift()!
+
+    if (currentBlocks.length && startsLiterarySection(block)) {
+      pageMarkdowns.push(joinBlocks(currentBlocks))
+      currentBlocks = []
+    }
+
+    const candidate = joinBlocks([...currentBlocks, block])
+
+    if (measureFits(candidate)) {
+      currentBlocks.push(block)
+      continue
+    }
+
+    if (currentBlocks.length) {
+      const split = splitBlockToFit(block, currentBlocks)
+      if (split?.head) {
+        pageMarkdowns.push(joinBlocks([...currentBlocks, split.head]))
+        currentBlocks = []
+        if (split.tail)
+          queue.unshift(split.tail)
+        continue
+      }
+
+      pageMarkdowns.push(joinBlocks(currentBlocks))
+      currentBlocks = []
+      queue.unshift(block)
+      continue
+    }
+
+    const split = splitBlockToFit(block)
+    if (split?.head) {
+      pageMarkdowns.push(split.head)
+      if (split.tail)
+        queue.unshift(split.tail)
+      continue
+    }
+
+    pageMarkdowns.push(block)
+  }
+
+  if (currentBlocks.length)
+    pageMarkdowns.push(joinBlocks(currentBlocks))
+
+  return pageMarkdowns.filter(Boolean)
+}
+
+function compactMeasuredPages(pageMarkdowns: string[]) {
+  const pages = [...pageMarkdowns]
+  let index = 0
+
+  while (index < pages.length - 1) {
+    const currentBlocks = splitCardRawBlocks(pages[index])
+    const nextBlocks = splitCardRawBlocks(pages[index + 1])
+    const firstNextBlock = nextBlocks[0]
+
+    if (!firstNextBlock) {
+      pages.splice(index + 1, 1)
+      continue
+    }
+
+    if (startsLiterarySection(firstNextBlock)) {
+      index += 1
+      continue
+    }
+
+    const movedCandidate = joinBlocks([...currentBlocks, firstNextBlock])
+    if (measureFits(movedCandidate)) {
+      pages[index] = movedCandidate
+      pages[index + 1] = joinBlocks(nextBlocks.slice(1))
+      if (!pages[index + 1])
+        pages.splice(index + 1, 1)
+      continue
+    }
+
+    const split = splitBlockToFit(firstNextBlock, currentBlocks)
+    if (split?.head) {
+      pages[index] = joinBlocks([...currentBlocks, split.head])
+      pages[index + 1] = joinBlocks([split.tail, ...nextBlocks.slice(1)])
+      continue
+    }
+
+    index += 1
+  }
+
+  return pages.filter(Boolean)
+}
+
+function buildMeasuredPages(markdown: string) {
+  const source = normalizeCardSource(markdown)
+  const coverSource = buildActiveCoverSource(source)
+  const bodySource = coverSource?.bodyMarkdown ?? source
+  const hasManualBreaks = respectManualBreaks.value && hasManualCardBreaks(bodySource)
+  const sections = hasManualBreaks
+    ? splitManualCardSections(bodySource)
+    : bodySource ? [bodySource.replace(manualCardBreakRe, `\n\n`)] : []
+  const pageMarkdowns = sections.flatMap(section => compactMeasuredPages(paginateMeasuredBlocks(splitCardRawBlocks(section))))
+  const pageSource = hasManualBreaks ? `mixed` : `auto`
+  const allPageMarkdowns = coverSource
+    ? [coverSource.coverMarkdown, ...pageMarkdowns]
+    : pageMarkdowns
+
+  return allPageMarkdowns.map((pageMarkdown, index) => createCardPage(pageMarkdown, index, pageSource))
+}
+
+function buildInitialPages(markdown: string) {
+  const coverSource = buildActiveCoverSource(markdown)
+  if (!coverSource)
+    return buildCardPages(markdown)
+
+  const bodyPages = coverSource.bodyMarkdown ? buildCardPages(coverSource.bodyMarkdown) : []
+  return [
+    createCardPage(coverSource.coverMarkdown, 0, `auto`),
+    ...bodyPages.map((page, index) => createCardPage(page.markdown, index + 1, page.source)),
+  ]
+}
+
 function refreshPages() {
-  pages.value = buildCardPages(sourceContent.value)
-  if (activeIndex.value > pages.value.length - 1)
-    activeIndex.value = Math.max(0, pages.value.length - 1)
-  nextTick(checkOverflow)
+  pages.value = buildInitialPages(sourceContent.value)
+  isPaginating.value = true
+  const run = ++paginationRun
+
+  nextTick(async () => {
+    await document.fonts?.ready
+    if (run !== paginationRun)
+      return
+
+    pages.value = buildMeasuredPages(sourceContent.value)
+    if (activeIndex.value > pages.value.length - 1)
+      activeIndex.value = Math.max(0, pages.value.length - 1)
+    isPaginating.value = false
+    nextTick(checkOverflow)
+  })
+}
+
+function runAutoPagination() {
+  respectManualBreaks.value = false
+  refreshPages()
+  toast.success(`已按当前样式重新自动分页`)
+}
+
+async function exportCurrentCard() {
+  const card = activeCardRef.value
+  const page = pages.value[activeIndex.value]
+  if (!card || !page)
+    return
+
+  isExporting.value = true
+  try {
+    await document.fonts?.ready
+    await exportLongformCardImage(card, {
+      title: `${currentPost.value?.title || page.title}-${String(activeIndex.value + 1).padStart(2, `0`)}`,
+    })
+    toast.success(`已导出当前页`)
+  }
+  finally {
+    isExporting.value = false
+  }
+}
+
+async function exportAllCards() {
+  const card = activeCardRef.value
+  if (!card || pages.value.length === 0)
+    return
+
+  isExporting.value = true
+  try {
+    await document.fonts?.ready
+    await exportLongformCardImages(card, {
+      title: currentPost.value?.title || `长图文`,
+      pages: pages.value,
+    })
+    toast.success(`已打包导出全部卡片`)
+  }
+  finally {
+    isExporting.value = false
+  }
 }
 
 function insertCardBreak() {
+  respectManualBreaks.value = true
   const page = pages.value[activeIndex.value]
   const editor = editorStore.editor
   if (!page || !editor) {
@@ -95,7 +568,7 @@ function updatePreviewScale() {
     return
 
   const availableWidth = container.clientWidth
-  previewScale.value = Math.min(1, Math.max(0.55, availableWidth / cardBaseWidth))
+  previewScale.value = Math.min(1, Math.max(0.55, availableWidth / cardBaseWidth.value))
   nextTick(checkOverflow)
 }
 
@@ -148,43 +621,41 @@ onBeforeUnmount(() => {
 
     <div id="card-preview-scroll" class="card-stage min-w-0 flex-1 overflow-y-auto p-5">
       <div ref="cardStageInnerRef" class="mx-auto flex w-full max-w-[520px] min-w-0 flex-col items-center gap-4">
-        <div class="card-toolbar flex w-full items-center justify-between rounded border bg-background px-3 py-2 text-xs text-muted-foreground">
-          <span class="inline-flex items-center gap-2">
-            <LayoutTemplate class="size-4" />
-            长图文卡片 · {{ templateLabel }} · {{ ratioLabel }}
+        <div class="card-toolbar flex w-full flex-nowrap items-center justify-center rounded border bg-background px-3 py-2 text-xs text-muted-foreground">
+          <span class="toolbar-options">
+            <label class="toolbar-select-label">
+              <span class="sr-only">比例</span>
+              <select v-model="cardRatio" class="toolbar-select ratio-select" aria-label="长图文比例">
+                <option
+                  v-for="option in ratioOptions"
+                  :key="option.id"
+                  :value="option.id"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
           </span>
-          <span>{{ pagingLabel }} · {{ activeIndex + 1 }} / {{ pages.length }}</span>
-        </div>
-
-        <div class="card-controls grid w-full grid-cols-2 gap-2 rounded border bg-background p-2 text-xs md:grid-cols-4">
-          <button
-            class="control-button"
-            :class="{ active: cardTemplate === 'clean' }"
-            @click="uiStore.setCardTemplate('clean')"
-          >
-            清爽白底
-          </button>
-          <button
-            class="control-button"
-            :class="{ active: cardTemplate === 'note' }"
-            @click="uiStore.setCardTemplate('note')"
-          >
-            小红书笔记
-          </button>
-          <button
-            class="control-button"
-            :class="{ active: cardRatio === '3-4' }"
-            @click="uiStore.setCardRatio('3-4')"
-          >
-            3:4
-          </button>
-          <button
-            class="control-button"
-            :class="{ active: cardRatio === '4-5' }"
-            @click="uiStore.setCardRatio('4-5')"
-          >
-            4:5
-          </button>
+          <span class="toolbar-actions">
+            <button type="button" class="toolbar-action-button" :disabled="isPaginating || isExporting" @click="runAutoPagination">
+              {{ isPaginating ? '分页中' : '自动分页' }}
+            </button>
+            <span class="download-menu">
+              <button type="button" class="toolbar-action-button" :disabled="isExporting" aria-haspopup="menu">
+                下载
+              </button>
+              <span class="download-menu-panel" role="menu">
+                <button type="button" class="download-menu-item" :disabled="isExporting" role="menuitem" @click="exportCurrentCard">
+                  <Download class="size-3.5" />
+                  单页
+                </button>
+                <button type="button" class="download-menu-item" :disabled="isExporting" role="menuitem" @click="exportAllCards">
+                  <Files class="size-3.5" />
+                  全部
+                </button>
+              </span>
+            </span>
+          </span>
         </div>
 
         <div v-if="pages[activeIndex]" class="card-scale-shell" :style="cardShellStyle">
@@ -192,18 +663,30 @@ onBeforeUnmount(() => {
             ref="activeCardRef"
             class="xiaohongshu-card"
             :class="[
-              cardTemplate === 'clean' ? 'clean-template' : 'note-template',
+              activeTemplate.className,
               cardRatio === '3-4' ? 'ratio-3-4' : 'ratio-4-5',
               themeClass,
+              { 'is-cover-page': activeIndex === 0 },
             ]"
             :style="scaledCardStyle"
           >
             <header class="card-page-header">
-              <span>Longform Card</span>
-              <span>{{ String(activeIndex + 1).padStart(2, '0') }}</span>
+              <span>{{ usesReadingProgress ? '阅读进度' : 'Longform Card' }}</span>
+              <span>{{ usesReadingProgress ? pageIndicatorText : String(activeIndex + 1).padStart(2, '0') }}</span>
             </header>
 
+            <span v-if="usesSpecialCover" class="card-cover-motif" aria-hidden="true">
+              <span class="card-cover-line" />
+              <span class="card-cover-dot" />
+              <span v-if="cardTemplate === 'green'" class="card-cover-plant" />
+            </span>
+
             <section class="card-content" v-html="pages[activeIndex].html" />
+
+            <div v-if="usesSpecialCover" class="card-cover-meta">
+              <span>{{ coverAuthorText }}</span>
+              <span>{{ coverDateText }}</span>
+            </div>
 
             <footer class="card-page-footer">
               <span>Markdown to Cards</span>
@@ -235,11 +718,37 @@ onBeforeUnmount(() => {
       </div>
       <BackTop target="card-preview-scroll" :right="24" :bottom="24" />
     </div>
+
+    <div class="stage-page-indicator" aria-live="polite">
+      {{ activeIndex + 1 }} / {{ pages.length }}
+    </div>
+
+    <article
+      class="xiaohongshu-card measurement-card"
+      :class="[
+        activeTemplate.className,
+        cardRatio === '3-4' ? 'ratio-3-4' : 'ratio-4-5',
+        themeClass,
+      ]"
+      :style="cardStyle"
+      aria-hidden="true"
+    >
+      <header class="card-page-header">
+        <span>{{ usesReadingProgress ? '阅读进度' : 'Longform Card' }}</span>
+        <span>{{ usesReadingProgress ? '00/00' : '00' }}</span>
+      </header>
+      <section ref="measurementContentRef" class="card-content" />
+      <footer class="card-page-footer">
+        <span>Markdown to Cards</span>
+        <span>0 / 0</span>
+      </footer>
+    </article>
   </div>
 </template>
 
 <style lang="less" scoped>
 .card-mode-preview {
+  position: relative;
   background:
     radial-gradient(circle at 20% 10%, rgb(255 248 238 / 0.9), transparent 28%),
     linear-gradient(135deg, #f7f5f0 0%, #eef4f2 45%, #f7f8fb 100%);
@@ -293,20 +802,163 @@ onBeforeUnmount(() => {
 }
 
 .card-toolbar {
+  box-sizing: border-box;
   min-height: 40px;
+  column-gap: 14px;
+  padding-right: 12px;
+  padding-left: 12px;
 }
 
-.control-button {
-  min-height: 32px;
+.toolbar-options,
+.toolbar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-select-label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.toolbar-select {
+  box-sizing: border-box;
+  height: 28px;
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
-  padding: 0 10px;
+  background: hsl(var(--background));
+  padding: 0 30px 0 10px;
+  color: hsl(var(--foreground));
+  font-weight: 650;
+  outline: none;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--card-primary, #5d8d7b);
+  }
+}
+
+.ratio-select {
+  width: 72px;
+}
+
+.toolbar-actions {
+  white-space: nowrap;
+}
+
+.stage-page-indicator {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  min-width: 54px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--background) / 88%);
+  padding: 5px 10px;
   color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  text-align: center;
+  box-shadow: 0 6px 18px rgb(15 23 42 / 10%);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.toolbar-action-button {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  background: hsl(var(--accent));
+  padding: 0 8px;
+  color: hsl(var(--accent-foreground));
+  font-weight: 650;
+  transition: opacity 0.16s ease, transform 0.12s ease;
+
+  &:hover {
+    opacity: 0.88;
+  }
+
+  &:active {
+    transform: scale(0.98);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+}
+
+.download-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.download-menu::after {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: 8px;
+  content: '';
+}
+
+.download-menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  min-width: 104px;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--background));
+  padding: 6px;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 12%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+  visibility: hidden;
+}
+
+.download-menu:hover .download-menu-panel,
+.download-menu:focus-within .download-menu-panel {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.download-menu-item {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: hsl(var(--foreground));
+  font-weight: 650;
+  white-space: nowrap;
   transition: background 0.16s ease, color 0.16s ease;
 
-  &.active,
-  &:hover {
+  &:hover,
+  &:focus-visible {
     background: hsl(var(--accent));
     color: hsl(var(--accent-foreground));
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 }
 
@@ -346,28 +998,28 @@ onBeforeUnmount(() => {
 .clean-template {
   display: flex;
   flex-direction: column;
-  padding: 26px 28px 20px;
+  padding: var(--card-page-padding-top, 26px) var(--card-page-padding-x, 28px) var(--card-page-padding-bottom, 20px);
 }
 
 .note-template {
   display: flex;
   flex-direction: column;
-  border-color: color-mix(in srgb, var(--card-primary, #b76e79) 28%, #f4c7d3);
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.88), rgb(255 250 252 / 0.98)),
-    radial-gradient(circle at 85% 10%, color-mix(in srgb, var(--card-primary, #b76e79) 24%, #ffdce6) 0, transparent 32%),
-    #fff7fa;
-  padding: 26px 26px 20px;
-  box-shadow: 0 24px 70px color-mix(in srgb, var(--card-primary, #b76e79) 22%, transparent);
+  border-color: rgb(61 47 23 / 12%);
+  border-radius: 2px;
+  background: #f6f5e3;
+  padding: var(--card-page-padding-top, 26px) var(--card-page-padding-x, 26px) var(--card-page-padding-bottom, 20px);
+  box-shadow: 0 24px 64px rgb(61 47 23 / 14%);
 }
 
-.note-template .card-page-header,
-.note-template .card-page-footer {
-  color: var(--card-primary, #ba6a83);
+.note-template .card-page-header {
+  color: rgb(0 0 0 / 50%);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .note-template .card-page-footer {
-  border-top-color: color-mix(in srgb, var(--card-primary, #ba6a83) 20%, #f3d6de);
+  display: none;
 }
 
 .card-page-header,
@@ -384,11 +1036,11 @@ onBeforeUnmount(() => {
 }
 
 .card-page-header {
-  padding-bottom: 18px;
+  padding-bottom: var(--card-header-gap, 18px);
 }
 
 .card-page-footer {
-  padding-top: 16px;
+  padding-top: var(--card-footer-gap, 16px);
   border-top: 1px solid #ebe5d8;
 }
 
@@ -450,30 +1102,30 @@ onBeforeUnmount(() => {
 
   h1 {
     margin: 0 0 18px;
-    font-size: calc(var(--card-font-size, 16px) * 1.9);
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 1.9));
     font-weight: 800;
     line-height: 1.16;
   }
 
   h2 {
     margin: 0 0 14px;
-    font-size: calc(var(--card-font-size, 16px) * 1.38);
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 1.38));
     font-weight: 760;
     line-height: 1.22;
   }
 
   h3 {
     margin: 0 0 10px;
-    font-size: calc(var(--card-font-size, 16px) * 1.08);
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h3-scale, 1.08));
     font-weight: 720;
     line-height: 1.3;
   }
 
   p {
-    margin: 0 0 13px;
+    margin: 0 0 var(--card-paragraph-gap, 13px);
     color: #343832;
     font-size: var(--card-font-size, 16px);
-    line-height: 1.72;
+    line-height: var(--card-body-line-height, 1.72);
   }
 
   strong {
@@ -515,7 +1167,7 @@ onBeforeUnmount(() => {
   img {
     display: block;
     max-width: 100%;
-    max-height: 190px;
+    max-height: var(--card-image-max-height, 190px);
     margin: 14px auto;
     border-radius: 8px;
     object-fit: cover;
@@ -530,7 +1182,7 @@ onBeforeUnmount(() => {
   }
 
   pre {
-    max-height: 160px;
+    max-height: var(--card-code-block-max-height, 160px);
     overflow: hidden;
     border-radius: 8px;
     background: #242723;
@@ -543,57 +1195,90 @@ onBeforeUnmount(() => {
 
 .note-template :deep(.card-content) {
   h1 {
-    color: #2b2527;
-    font-size: calc(var(--card-font-size, 16px) * 2);
+    margin-bottom: var(--card-title-body-gap, 37.33px);
+    color: #1d2129;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 2.5));
+    font-weight: 850;
+    line-height: 1.22;
   }
 
   h2 {
-    display: inline-block;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--card-primary, #943d5a) 14%, white);
-    padding: 7px 13px;
-    color: var(--card-primary, #943d5a);
-    font-size: calc(var(--card-font-size, 16px) * 1.25);
+    margin: var(--card-title-body-gap, 37.33px) 0;
+    color: #1d2129;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 1.5));
+    font-weight: 850;
+    line-height: 1.3;
   }
 
   h3 {
-    color: var(--card-primary, #943d5a);
+    display: inline;
+    color: #1d2129;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h3-scale, 1.25));
+    font-weight: 850;
+    line-height: 1.45;
+    background: linear-gradient(transparent 58%, rgb(0 0 0 / 18%) 58%);
   }
 
   p {
-    color: #3d3437;
+    color: #1d2129;
     font-size: var(--card-font-size, 16px);
   }
 
   strong {
-    border-radius: 5px;
-    background: linear-gradient(transparent 58%, color-mix(in srgb, var(--card-primary, #ffe071) 24%, #ffe071) 58%);
-    color: #1f1d1c;
+    background: linear-gradient(transparent 62%, color-mix(in srgb, var(--card-primary, #715b32) 20%, transparent) 62%);
+    color: #1d2129;
+    font-weight: 850;
   }
 
   blockquote {
+    position: relative;
+    margin-top: 42px;
     border-left: 0;
     border-radius: 8px;
-    background: color-mix(in srgb, var(--card-primary, #8c3551) 10%, #fff0f4);
-    padding: 13px 15px;
+    background: rgb(61 47 23 / 7%);
+    padding: 14px 10px;
+
+    &::before {
+      position: absolute;
+      bottom: calc(100% + 12px);
+      left: 5px;
+      width: 29px;
+      height: 18px;
+      background: var(--card-quote-mark-image) center / 100% 100% no-repeat;
+      content: '';
+    }
   }
 
   blockquote p {
-    color: color-mix(in srgb, var(--card-primary, #8c3551) 75%, #2b2527);
+    color: #1d2129;
+    font-weight: 400;
   }
 
   ul,
   ol {
-    padding-left: 18px;
+    margin-top: 20px;
+    padding-left: 22px;
+    color: #1d2129;
+    line-height: 2;
   }
 
   li::marker {
-    color: var(--card-primary, #d85e83);
+    color: #1d2129;
   }
 
   code {
-    background: color-mix(in srgb, var(--card-primary, #943d5a) 12%, #ffe8ef);
-    color: var(--card-primary, #943d5a);
+    background: rgb(61 47 23 / 9%);
+    color: #1d2129;
+  }
+
+  img {
+    border-radius: 0;
+    filter: saturate(0.82) sepia(0.08);
+  }
+
+  pre {
+    background: #292923;
+    color: #f6f5e3;
   }
 }
 
@@ -606,5 +1291,587 @@ onBeforeUnmount(() => {
   border-radius: 2px;
   background: #ffffff;
   box-shadow: 0 18px 48px color-mix(in srgb, var(--card-primary, #5d8d7b) 10%, transparent);
+}
+
+.dust-template,
+.green-template,
+.literary-template {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  padding: var(--card-page-padding-top, 23.33px) var(--card-page-padding-x, 37.33px) var(--card-page-padding-bottom, 23.33px);
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif;
+  font-weight: 400;
+  box-shadow: 0 24px 64px rgb(30 22 16 / 18%);
+}
+
+.dust-template {
+  background: #8a1e1e;
+  color: rgb(255 255 255 / 90%);
+}
+
+.green-template {
+  background: #acc594;
+  color: rgb(0 0 0 / 90%);
+}
+
+.literary-template {
+  background: #f6f5e3;
+  color: #475221;
+}
+
+.dust-template::before,
+.green-template::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: var(--card-texture-image) center / cover no-repeat;
+  content: '';
+  opacity: var(--card-texture-opacity, 0.1);
+  pointer-events: none;
+}
+
+.literary-template::before {
+  position: absolute;
+  z-index: -1;
+  top: calc(-974px * 420 / 900);
+  left: calc(-416px * 420 / 900);
+  width: calc(1348px * 420 / 900);
+  height: calc(2921px * 420 / 900);
+  background: var(--card-texture-image) center / cover no-repeat;
+  content: '';
+  opacity: var(--card-texture-opacity, 0.15);
+  pointer-events: none;
+}
+
+.literary-template.is-cover-page::before {
+  top: calc(-328px * 420 / 900);
+  left: calc(-24px * 420 / 900);
+  width: calc(956px * 420 / 900);
+  height: calc(2071px * 420 / 900);
+  opacity: 0.28;
+}
+
+.dust-template .card-page-header,
+.green-template .card-page-header,
+.literary-template .card-page-header {
+  position: relative;
+  z-index: 2;
+  font-family: inherit;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.dust-template .card-page-header {
+  color: rgb(255 255 255 / 60%);
+}
+
+.green-template .card-page-header {
+  color: rgb(0 0 0 / 60%);
+}
+
+.literary-template .card-page-header {
+  color: rgb(71 82 33 / 50%);
+}
+
+.dust-template .card-page-footer,
+.green-template .card-page-footer,
+.literary-template .card-page-footer {
+  display: none;
+}
+
+.dust-template .card-content,
+.green-template .card-content,
+.literary-template .card-content {
+  position: relative;
+  z-index: 2;
+}
+
+.dust-template :deep(.card-content *),
+.green-template :deep(.card-content *) {
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif !important;
+}
+
+.card-cover-motif {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+}
+
+.dust-template.is-cover-page .card-cover-motif,
+.green-template.is-cover-page .card-cover-motif {
+  display: block;
+}
+
+.card-cover-meta {
+  display: none;
+}
+
+.dust-template.is-cover-page .card-cover-meta,
+.green-template.is-cover-page .card-cover-meta {
+  position: absolute;
+  z-index: 2;
+  right: calc(80px * 420 / 900);
+  bottom: calc(80px * 420 / 900);
+  left: calc(80px * 420 / 900);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif;
+  font-size: calc(32px * 420 / 900);
+  font-weight: 400;
+  line-height: normal;
+  white-space: nowrap;
+}
+
+.dust-template.is-cover-page .card-cover-meta {
+  color: rgb(255 255 255 / 60%);
+}
+
+.green-template.is-cover-page .card-cover-meta {
+  color: rgb(0 0 0 / 60%);
+}
+
+.literary-template.is-cover-page .card-cover-meta {
+  position: static;
+  z-index: 3;
+  order: 2;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: calc(20px * 420 / 900);
+  margin-top: calc(40px * 420 / 900);
+  color: #475221;
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif;
+  font-size: var(--card-font-size, 16px);
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.card-cover-line,
+.card-cover-dot,
+.card-cover-plant {
+  position: absolute;
+  display: block;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+
+.card-cover-line {
+  background-image: var(--card-cover-line-image);
+  transform-origin: center;
+}
+
+.card-cover-dot {
+  width: calc(44px * 420 / 900);
+  height: calc(44px * 420 / 900);
+  background-image: var(--card-cover-dot-image);
+}
+
+.card-cover-plant {
+  top: calc(728px * 420 / 900);
+  left: calc(349px * 420 / 900);
+  width: calc(664px * 420 / 900);
+  height: calc(470px * 420 / 900);
+  background-image: var(--card-cover-plant-image);
+  mix-blend-mode: difference;
+  opacity: 0.22;
+  transform: rotate(72.58deg);
+  transform-origin: center;
+}
+
+.dust-template.is-cover-page .card-cover-line {
+  top: calc(636px * 420 / 900);
+  left: calc(335px * 420 / 900);
+  width: calc(581px * 420 / 900);
+  height: calc(5px * 420 / 900);
+  transform: rotate(118.02deg);
+}
+
+.dust-template.is-cover-page .card-cover-dot {
+  top: calc(851px * 420 / 900);
+  left: calc(723px * 420 / 900);
+}
+
+.green-template.is-cover-page .card-cover-line {
+  top: calc(578px * 420 / 900);
+  left: calc(406px * 420 / 900);
+  width: calc(542px * 420 / 900);
+  height: calc(5px * 420 / 900);
+  transform: rotate(104.65deg);
+}
+
+.green-template.is-cover-page .card-cover-dot {
+  top: calc(810px * 420 / 900);
+  left: calc(701px * 420 / 900);
+}
+
+.dust-template.is-cover-page .card-content,
+.green-template.is-cover-page .card-content {
+  position: absolute;
+  z-index: 2;
+  min-height: 0;
+  overflow: visible;
+}
+
+.dust-template.is-cover-page .card-content {
+  top: calc(253px * 420 / 900);
+  left: calc(80px * 420 / 900);
+  width: calc(521px * 420 / 900);
+}
+
+.green-template.is-cover-page .card-content {
+  top: calc(165px * 420 / 900);
+  left: calc(80px * 420 / 900);
+  width: calc(484px * 420 / 900);
+  height: calc(632px * 420 / 900);
+}
+
+.dust-template.is-cover-page :deep(.card-content h1) {
+  width: 100%;
+  margin: 0;
+  font-size: calc(100px * 420 / 900);
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.green-template.is-cover-page :deep(.card-content h1) {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  font-size: calc(110px * 420 / 900);
+  font-weight: 400;
+  line-height: calc(120 / 110);
+  text-align: center;
+  text-orientation: mixed;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  writing-mode: vertical-lr;
+}
+
+.dust-template :deep(.card-content),
+.green-template :deep(.card-content) {
+  h1,
+  h2,
+  h3,
+  p,
+  ul,
+  ol,
+  blockquote,
+  code,
+  pre {
+    font-family: inherit;
+    font-weight: 400;
+  }
+
+  h1 {
+    margin: 0 0 var(--card-title-body-gap, 37.33px);
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 2.5));
+    line-height: 1.25;
+  }
+
+  h2 {
+    margin: 0 0 var(--card-title-body-gap, 37.33px);
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 2));
+    line-height: 1.3;
+  }
+
+  h2:not(:first-child) {
+    margin-top: var(--card-title-body-gap, 37.33px);
+  }
+
+  h3 {
+    display: inline;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h3-scale, 1.25));
+    line-height: 1.45;
+  }
+
+  p {
+    font-size: var(--card-font-size, 16px);
+    line-height: var(--card-body-line-height, 1.5);
+  }
+
+  ul,
+  ol {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    padding-left: 22px;
+    font-size: var(--card-font-size, 16px);
+    line-height: var(--card-body-line-height, 1.5);
+  }
+
+  li + li {
+    margin-top: 4px;
+  }
+
+  blockquote {
+    position: relative;
+    margin: 42px 0 var(--card-paragraph-gap, 18.67px);
+    border: 0;
+    border-radius: 7.47px;
+    padding: 9.33px;
+
+    &::before {
+      position: absolute;
+      bottom: calc(100% + 12px);
+      left: 5px;
+      width: 29px;
+      height: 18px;
+      background: var(--card-quote-mark-image) center / 100% 100% no-repeat;
+      content: '';
+    }
+  }
+
+  blockquote p {
+    margin: 0;
+    font-weight: 400;
+  }
+
+  img {
+    border-radius: 0;
+  }
+
+  code {
+    border-radius: 2px;
+  }
+}
+
+.dust-template :deep(.card-content) {
+  h1,
+  h2,
+  h3,
+  p,
+  ul,
+  ol,
+  blockquote p,
+  strong,
+  code {
+    color: rgb(255 255 255 / 90%);
+  }
+
+  h3,
+  strong {
+    background: linear-gradient(transparent 58%, rgb(255 255 14 / 22%) 58%);
+  }
+
+  blockquote {
+    background: rgb(255 255 14 / 12%);
+  }
+
+  li::marker {
+    color: rgb(255 255 255 / 90%);
+  }
+
+  code {
+    background: rgb(255 255 255 / 12%);
+  }
+
+  pre {
+    background: rgb(38 10 10 / 50%);
+    color: rgb(255 255 255 / 90%);
+  }
+}
+
+.green-template :deep(.card-content) {
+  h1,
+  h2,
+  h3,
+  p,
+  ul,
+  ol,
+  blockquote p,
+  strong,
+  code {
+    color: rgb(0 0 0 / 90%);
+  }
+
+  h3,
+  strong {
+    background: linear-gradient(transparent 58%, rgb(0 0 0 / 12%) 58%);
+  }
+
+  blockquote {
+    background: rgb(0 0 0 / 7%);
+  }
+
+  li::marker {
+    color: rgb(0 0 0 / 90%);
+  }
+
+  code {
+    background: rgb(0 0 0 / 9%);
+  }
+
+  pre {
+    background: rgb(20 38 16 / 50%);
+    color: rgb(255 255 255 / 90%);
+  }
+}
+
+.literary-template :deep(.card-content) {
+  h1,
+  h2 {
+    margin: 0 0 var(--card-title-body-gap, 37.33px);
+    color: #143103;
+    font-family: 'ZCOOL QingKe HuangYou', sans-serif !important;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 2.5));
+    font-weight: 400;
+    line-height: normal;
+  }
+
+  h3 {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    color: #475221;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h3-scale, 1.5));
+    font-weight: 400;
+    line-height: 1.4;
+  }
+
+  p,
+  ul,
+  ol,
+  blockquote {
+    color: #475221;
+    font-size: var(--card-font-size, 16px);
+    font-weight: 400;
+    line-height: var(--card-body-line-height, 1.5625);
+  }
+
+  p {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+
+  ul,
+  ol {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    padding-left: 22px;
+  }
+
+  li::marker {
+    color: #475221;
+  }
+
+  blockquote {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+
+  blockquote p {
+    color: inherit;
+    font-weight: 400;
+  }
+
+  strong {
+    color: inherit;
+    font-weight: 600;
+  }
+
+  code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+  }
+
+  pre {
+    max-height: none;
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    color: #475221;
+    font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif;
+    font-size: var(--card-font-size, 16px);
+    line-height: var(--card-body-line-height, 1.5625);
+    white-space: pre-wrap;
+  }
+
+  img,
+  table {
+    display: none;
+  }
+}
+
+.literary-template.is-cover-page .card-content {
+  display: contents;
+}
+
+.literary-template.is-cover-page {
+  padding: 0 calc(80px * 420 / 900);
+}
+
+.literary-template.is-cover-page .card-page-header {
+  position: absolute;
+  z-index: 3;
+  top: calc(50px * 420 / 900);
+  right: calc(80px * 420 / 900);
+  left: calc(80px * 420 / 900);
+  padding: 0;
+}
+
+.literary-template.is-cover-page :deep(.card-content h1) {
+  position: relative;
+  z-index: 2;
+  order: 1;
+  display: -webkit-box;
+  width: 100%;
+  margin: calc(192px * 420 / 900) 0 0;
+  overflow: hidden;
+  color: #143103;
+  font-family: 'ZCOOL QingKe HuangYou', sans-serif !important;
+  font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 2.5));
+  font-weight: 400;
+  line-height: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.literary-template.is-cover-page :deep(.card-content h1 *) {
+  font-family: inherit !important;
+}
+
+.literary-template.is-cover-page :deep(.card-content p) {
+  position: absolute;
+  z-index: 2;
+  right: calc(80px * 420 / 900);
+  bottom: calc(80px * 420 / 900);
+  display: block;
+  width: calc(500px * 420 / 900);
+  max-width: calc(100% - (160px * 420 / 900));
+  max-height: 13em;
+  margin: 0;
+  overflow: hidden;
+  color: #475221;
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif !important;
+  font-size: var(--card-font-size, 16px);
+  font-weight: 400;
+  line-height: 1.625;
+  text-align: right;
+  overflow-wrap: break-word;
+}
+
+// 必须放在模板样式之后，避免模板的 position: relative 让测量卡片参与预览区布局。
+.measurement-card {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  z-index: -1;
+  visibility: hidden;
+  pointer-events: none;
+  transform: none;
 }
 </style>

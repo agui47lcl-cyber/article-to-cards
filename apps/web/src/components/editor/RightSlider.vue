@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * [INPUT]: 依赖主题配置、长图文模板注册表、样式控件与 UI 状态 Store
+ * [OUTPUT]: 对外提供公众号与长图文共用的右侧样式配置面板
+ * [POS]: editor 组件域的视觉配置入口，模板选项从 cards 注册表自动扩展并写回全局状态
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 import type {
   HeadingLevel,
   HeadingStyleType,
@@ -11,6 +17,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useEditorRefresh } from '@/composables/useEditorRefresh'
 import { useLocalizedStyleOptions } from '@/composables/useLocalizedStyleOptions'
+import { cardTemplates } from '@/lib/cards/card-templates'
 import { useConfirmStore } from '@/stores/confirm'
 import { useCssEditorStore } from '@/stores/cssEditor'
 import { useThemeStore } from '@/stores/theme'
@@ -22,6 +29,7 @@ const uiStore = useUIStore()
 const themeStore = useThemeStore()
 const { t } = useI18n()
 const localizedStyleOptions = useLocalizedStyleOptions()
+const cardTemplateOptions = Object.values(cardTemplates)
 const {
   theme,
   fontFamily,
@@ -60,7 +68,7 @@ const selectedHeadingStyle = computed({
   },
 })
 
-const { isMobile, isOpenRightSlider, isDark } = storeToRefs(uiStore)
+const { isMobile, isOpenRightSlider, isDark, previewMode, cardTemplate } = storeToRefs(uiStore)
 
 // Theme change handlers
 function themeChanged(newTheme: keyof typeof themeMap) {
@@ -225,6 +233,40 @@ const formatOptions = ref<Format[]>([`rgb`, `hex`, `hsl`, `hsv`])
         </div>
       </div>
 
+      <div v-if="previewMode === 'cards'" class="space-y-2">
+        <h2 class="text-sm font-medium">
+          长图文样式
+        </h2>
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            v-for="option in cardTemplateOptions"
+            :key="option.id"
+            type="button"
+            class="card-template-option"
+            :class="{ active: cardTemplate === option.id }"
+            :aria-pressed="cardTemplate === option.id"
+            :title="option.description"
+            @click="cardTemplate = option.id"
+          >
+            <span
+              class="card-template-swatch"
+              :style="{
+                backgroundColor: option.previewBackground,
+                color: option.previewForeground,
+              }"
+            >
+              <span class="card-template-swatch-title" />
+              <span class="card-template-swatch-line short" />
+              <span class="card-template-swatch-line" />
+            </span>
+            <span class="min-w-0 text-left">
+              <span class="block truncate text-xs font-medium">{{ option.name }}</span>
+              <span class="mt-0.5 block truncate text-[10px] text-muted-foreground">{{ option.description }}</span>
+            </span>
+          </button>
+        </div>
+      </div>
+
       <div class="space-y-2">
         <h2 class="text-sm font-medium">
           {{ t('menu.theme') }}
@@ -386,6 +428,61 @@ const formatOptions = ref<Format[]>([`rgb`, `hex`, `hsl`, `hsv`])
 </template>
 
 <style scoped>
+.card-template-option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--background));
+  padding: 7px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.card-template-option:hover,
+.card-template-option.active {
+  border-color: hsl(var(--primary));
+}
+
+.card-template-option.active {
+  border-width: 2px;
+  padding: 6px;
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 20%);
+}
+
+.card-template-swatch {
+  display: flex;
+  width: 34px;
+  height: 44px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  border: 1px solid rgb(0 0 0 / 8%);
+  border-radius: 3px;
+  padding: 6px;
+  box-shadow: inset 0 0 14px rgb(255 255 255 / 8%);
+}
+
+.card-template-swatch-title,
+.card-template-swatch-line {
+  display: block;
+  height: 2px;
+  border-radius: 99px;
+  background: currentcolor;
+  opacity: 0.75;
+}
+
+.card-template-swatch-title {
+  height: 4px;
+  margin-bottom: 2px;
+}
+
+.card-template-swatch-line.short {
+  width: 70%;
+}
+
 /* 移动端右侧栏动画 - 只有添加了 animate 类才启用 */
 .mobile-right-drawer.animate {
   transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);

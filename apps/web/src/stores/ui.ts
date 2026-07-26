@@ -1,5 +1,12 @@
+/**
+ * [INPUT]: 依赖持久化 storage、长图文模板/比例类型与 Vue 响应式状态能力
+ * [OUTPUT]: 对外提供全局界面、预览模式、长图文模板选择和各类面板/对话框状态
+ * [POS]: stores 状态层的 UI 中枢，连接编辑器命令区、预览组件与配置侧栏
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 import { store } from '@/storage'
 import { addPrefix } from '@/storage/prefix'
+import type { CardRatio, CardTemplateId } from '@/lib/cards/card-templates'
 
 /**
  * UI 状态 Store
@@ -58,14 +65,14 @@ export const useUIStore = defineStore(`ui`, () => {
   }
 
   // 长图文卡片配置
-  const cardTemplate = store.reactive<'clean' | 'note'>(addPrefix(`cardTemplate`), `clean`)
-  const cardRatio = store.reactive<'3-4' | '4-5'>(addPrefix(`cardRatio`), `3-4`)
+  const cardTemplate = store.reactive<CardTemplateId>(addPrefix(`cardTemplate`), `clean`)
+  const cardRatio = store.reactive<CardRatio>(addPrefix(`cardRatio`), `3-4`)
 
-  function setCardTemplate(template: 'clean' | 'note') {
+  function setCardTemplate(template: CardTemplateId) {
     cardTemplate.value = template
   }
 
-  function setCardRatio(ratio: '3-4' | '4-5') {
+  function setCardRatio(ratio: CardRatio) {
     cardRatio.value = ratio
   }
 

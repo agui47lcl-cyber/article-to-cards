@@ -17,6 +17,8 @@ const isNetlify = process.env.SERVER_ENV === `NETLIFY`
 const isUTools = process.env.SERVER_ENV === `UTOOLS`
 const isCfWorkers = process.env.CF_WORKERS === `1`
 const isCfPages = process.env.CF_PAGES === `1`
+const disableTailwind = process.env.MD_DISABLE_TAILWIND === `1`
+const disableRadar = process.env.MD_DISABLE_RADAR === `1`
 
 const base = isNetlify || isCfWorkers || isCfPages ? `/` : isUTools ? `./` : `/md/`
 
@@ -41,11 +43,11 @@ export default defineConfig(({ mode }) => {
         },
       }),
       isCfWorkers && cloudflarePlugin,
-      tailwindcss(),
+      !disableTailwind && tailwindcss(),
       mode === `development` && env.VITE_VUE_DEVTOOLS === `true` && vueDevTools({
         launchEditor: env.VITE_LAUNCH_EDITOR ?? `code`,
       }),
-      !isUTools && VitePluginRadar({
+      !isUTools && !disableRadar && VitePluginRadar({
         analytics: { id: `G-7NZL3PZ0NK` },
       }),
       ...(process.env.ANALYZE === `true`
