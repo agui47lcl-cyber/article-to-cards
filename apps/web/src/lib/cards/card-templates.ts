@@ -1,4 +1,10 @@
-export type CardTemplateId = 'clean' | 'note' | 'dust' | 'green'
+/**
+ * [INPUT]: 依赖长图文卡片 420px 预览基准与 900px Figma 设计尺寸换算规则
+ * [OUTPUT]: 对外提供模板/比例定义、模板 token 查询及 CSS 变量映射
+ * [POS]: cards 领域的视觉配置注册表，供预览、分页测量和右侧模板选择共同消费
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+export type CardTemplateId = 'clean' | 'note' | 'dust' | 'green' | 'literary'
 export type CardRatio = '3-4' | '4-5'
 
 export interface CardTemplateTokens {
@@ -139,6 +145,29 @@ export const cardTemplates: Record<CardTemplateId, CardTemplateDefinition> = {
       bodyLineHeight: 1.5,
       paragraphGap: 40 * (420 / 900),
       imageMaxHeight: 225,
+      codeBlockMaxHeight: 180,
+    },
+  },
+  literary: {
+    id: `literary`,
+    name: `小说散文随笔`,
+    description: `标题字体、宋体正文与智能摘录封面构成的纯文字文学模板。`,
+    className: `literary-template`,
+    previewBackground: `#f6f5e3`,
+    previewForeground: `#475221`,
+    tokens: {
+      pagePaddingX: 80 * (420 / 900),
+      pagePaddingTop: 50 * (420 / 900),
+      pagePaddingBottom: 50 * (420 / 900),
+      headerGap: 76 * (420 / 900),
+      footerGap: 0,
+      h1Scale: 2.5,
+      h2Scale: 2.5,
+      h3Scale: 1.5,
+      titleBodyGap: 80 * (420 / 900),
+      bodyLineHeight: 50 / 32,
+      paragraphGap: 40 * (420 / 900),
+      imageMaxHeight: 0,
       codeBlockMaxHeight: 180,
     },
   },

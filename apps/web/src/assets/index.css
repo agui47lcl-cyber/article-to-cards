@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 Tailwind、全局主题变量及长图文模板使用的本地字体资源
+ * [OUTPUT]: 对外提供 Web 应用全局样式、设计 token 与可导出的字体声明
+ * [POS]: assets 样式入口，统一承载应用基础视觉与跨组件字体资源
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 @import 'tailwindcss' source('../');
 @import 'tw-animate-css';
 
@@ -7,6 +13,14 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
+}
+
+@font-face {
+  font-family: 'ZCOOL QingKe HuangYou';
+  src: url('./fonts/zcool-qingke-huangyou.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
 }
 
 @source '../../../../packages/shared/src';

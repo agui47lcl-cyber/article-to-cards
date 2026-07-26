@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 marked、DOMPurify 与长图文 Markdown 分隔/块级语法约定
+ * [OUTPUT]: 对外提供卡片页面模型、基础估重分页、手动分隔、HTML 渲染和块拆分能力
+ * [POS]: cards 领域的基础分页与渲染内核，被 DOM 实测分页器和导出流程共同消费
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 import DOMPurify from 'isomorphic-dompurify'
 import { marked } from 'marked'
 

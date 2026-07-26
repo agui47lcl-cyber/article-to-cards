@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * [INPUT]: 依赖卡片模板与分页模型、文学封面摘录及日期题记、编辑器和主题状态、图片导出服务及模板视觉资源
+ * [OUTPUT]: 对外提供公众号编辑器中的长图文分页预览、字体就绪后渲染的文学封面、模板切换、溢出检测与图片下载面板
+ * [POS]: editor 组件域的长图文预览核心，承接 Markdown 内容并协调封面策略、字体加载、测量分页、卡片渲染和导出
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 import { AlertTriangle, Download, Files, SplitSquareHorizontal } from '@lucide/vue'
 import dustDotUrl from '@/assets/images/card-dust-dot.svg'
 import dustLineUrl from '@/assets/images/card-dust-line.svg'
@@ -9,10 +15,15 @@ import greenLineUrl from '@/assets/images/card-green-line.svg'
 import greenPlantUrl from '@/assets/images/card-green-plant.png'
 import greenQuoteMarkUrl from '@/assets/images/card-green-quote.svg'
 import greenTextureUrl from '@/assets/images/card-green-texture.png'
+import literaryTextureUrl from '@/assets/images/card-literary-texture.jpg'
 import quoteMarkUrl from '@/assets/images/card-quote-mark.svg'
 import type { CardPage } from '@/lib/cards/markdown-to-cards'
 import { exportLongformCardImage, exportLongformCardImages } from '@/services/export/card-images'
-import { splitCardCoverSource } from '@/lib/cards/card-cover'
+import {
+  formatLiteraryCoverDate,
+  splitCardCoverSource,
+  splitLiteraryCardCoverSource,
+} from '@/lib/cards/card-cover'
 import {
   cardRatios,
   getCardRatio,
@@ -62,18 +73,28 @@ const ratioOptions = Object.values(cardRatios)
 const activeTemplate = computed(() => getCardTemplate(cardTemplate.value))
 const activeRatio = computed(() => getCardRatio(cardRatio.value))
 const usesReadingProgress = computed(() => cardTemplate.value !== `clean`)
-const usesCoverDecoration = computed(() => cardTemplate.value === `dust` || cardTemplate.value === `green`)
-const coverAuthorText = computed(() => `作者：${authStore.user?.name || authStore.user?.login || `阿鬼`}`)
+const usesSpecialCover = computed(() => [`dust`, `green`, `literary`].includes(cardTemplate.value))
+const usesLiteraryLayout = computed(() => cardTemplate.value === `literary`)
+const coverAuthorText = computed(() => {
+  const author = authStore.user?.name || authStore.user?.login || `阿鬼`
+  return usesLiteraryLayout.value ? author : `作者：${author}`
+})
 const coverDateText = computed(() => {
   const rawDate = currentPost.value?.updateDatetime
   const date = rawDate instanceof Date ? rawDate : new Date(rawDate ?? Date.now())
   const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
-  return `日期： ${safeDate.getFullYear()} 年 ${safeDate.getMonth() + 1} 月`
+  if (usesLiteraryLayout.value)
+    return formatLiteraryCoverDate(safeDate)
+
+  const dateText = `${safeDate.getFullYear()} 年 ${safeDate.getMonth() + 1} 月`
+  return `日期： ${dateText}`
 })
 const pageIndicatorText = computed(() => {
   const current = String(activeIndex.value + 1).padStart(2, `0`)
   const total = String(pages.value.length).padStart(2, `0`)
-  return usesCoverDecoration.value ? `${current} / ${total}` : `${current}/${total}`
+  return cardTemplate.value === `dust` || cardTemplate.value === `green`
+    ? `${current} / ${total}`
+    : `${current}/${total}`
 })
 const templateAssets = computed(() => {
   if (cardTemplate.value === `dust`) {
@@ -93,6 +114,16 @@ const templateAssets = computed(() => {
       quoteMark: greenQuoteMarkUrl,
       coverLine: greenLineUrl,
       coverDot: greenDotUrl,
+    }
+  }
+
+  if (cardTemplate.value === `literary`) {
+    return {
+      texture: literaryTextureUrl,
+      textureOpacity: 0.15,
+      quoteMark: ``,
+      coverLine: ``,
+      coverDot: ``,
     }
   }
 
@@ -116,7 +147,7 @@ const cardStyle = computed(() => ({
   '--card-ratio-id': activeRatio.value.id,
   '--card-width': `${cardBaseWidth.value}px`,
   '--card-height': `${cardBaseHeight.value}px`,
-  '--card-quote-mark-image': `url("${templateAssets.value.quoteMark}")`,
+  '--card-quote-mark-image': templateAssets.value.quoteMark ? `url("${templateAssets.value.quoteMark}")` : `none`,
   '--card-texture-image': templateAssets.value.texture ? `url("${templateAssets.value.texture}")` : `none`,
   '--card-texture-opacity': templateAssets.value.textureOpacity,
   '--card-cover-line-image': templateAssets.value.coverLine ? `url("${templateAssets.value.coverLine}")` : `none`,
@@ -134,6 +165,20 @@ const scaledCardStyle = computed(() => ({
 
 function joinBlocks(blocks: string[]) {
   return blocks.map(block => block.trim()).filter(Boolean).join(`\n\n`)
+}
+
+function buildActiveCoverSource(markdown: string) {
+  if (!usesSpecialCover.value)
+    return null
+
+  const fallbackTitle = currentPost.value?.title ?? `长图文卡片`
+  return usesLiteraryLayout.value
+    ? splitLiteraryCardCoverSource(markdown, fallbackTitle)
+    : splitCardCoverSource(markdown, fallbackTitle)
+}
+
+function startsLiterarySection(block: string) {
+  return usesLiteraryLayout.value && /^\s{0,3}#{1,2}\s+/.test(block)
 }
 
 function measureFits(markdown: string) {
@@ -301,6 +346,12 @@ function paginateMeasuredBlocks(blocks: string[]) {
   while (queue.length && guard < 2000) {
     guard += 1
     const block = queue.shift()!
+
+    if (currentBlocks.length && startsLiterarySection(block)) {
+      pageMarkdowns.push(joinBlocks(currentBlocks))
+      currentBlocks = []
+    }
+
     const candidate = joinBlocks([...currentBlocks, block])
 
     if (measureFits(candidate)) {
@@ -355,6 +406,11 @@ function compactMeasuredPages(pageMarkdowns: string[]) {
       continue
     }
 
+    if (startsLiterarySection(firstNextBlock)) {
+      index += 1
+      continue
+    }
+
     const movedCandidate = joinBlocks([...currentBlocks, firstNextBlock])
     if (measureFits(movedCandidate)) {
       pages[index] = movedCandidate
@@ -379,9 +435,7 @@ function compactMeasuredPages(pageMarkdowns: string[]) {
 
 function buildMeasuredPages(markdown: string) {
   const source = normalizeCardSource(markdown)
-  const coverSource = usesCoverDecoration.value
-    ? splitCardCoverSource(source, currentPost.value?.title ?? `长图文卡片`)
-    : null
+  const coverSource = buildActiveCoverSource(source)
   const bodySource = coverSource?.bodyMarkdown ?? source
   const hasManualBreaks = respectManualBreaks.value && hasManualCardBreaks(bodySource)
   const sections = hasManualBreaks
@@ -397,10 +451,10 @@ function buildMeasuredPages(markdown: string) {
 }
 
 function buildInitialPages(markdown: string) {
-  if (!usesCoverDecoration.value)
+  const coverSource = buildActiveCoverSource(markdown)
+  if (!coverSource)
     return buildCardPages(markdown)
 
-  const coverSource = splitCardCoverSource(markdown, currentPost.value?.title ?? `长图文卡片`)
   const bodyPages = coverSource.bodyMarkdown ? buildCardPages(coverSource.bodyMarkdown) : []
   return [
     createCardPage(coverSource.coverMarkdown, 0, `auto`),
@@ -413,7 +467,8 @@ function refreshPages() {
   isPaginating.value = true
   const run = ++paginationRun
 
-  nextTick(() => {
+  nextTick(async () => {
+    await document.fonts?.ready
     if (run !== paginationRun)
       return
 
@@ -439,6 +494,7 @@ async function exportCurrentCard() {
 
   isExporting.value = true
   try {
+    await document.fonts?.ready
     await exportLongformCardImage(card, {
       title: `${currentPost.value?.title || page.title}-${String(activeIndex.value + 1).padStart(2, `0`)}`,
     })
@@ -456,6 +512,7 @@ async function exportAllCards() {
 
   isExporting.value = true
   try {
+    await document.fonts?.ready
     await exportLongformCardImages(card, {
       title: currentPost.value?.title || `长图文`,
       pages: pages.value,
@@ -618,7 +675,7 @@ onBeforeUnmount(() => {
               <span>{{ usesReadingProgress ? pageIndicatorText : String(activeIndex + 1).padStart(2, '0') }}</span>
             </header>
 
-            <span v-if="usesCoverDecoration" class="card-cover-motif" aria-hidden="true">
+            <span v-if="usesSpecialCover" class="card-cover-motif" aria-hidden="true">
               <span class="card-cover-line" />
               <span class="card-cover-dot" />
               <span v-if="cardTemplate === 'green'" class="card-cover-plant" />
@@ -626,7 +683,7 @@ onBeforeUnmount(() => {
 
             <section class="card-content" v-html="pages[activeIndex].html" />
 
-            <div v-if="usesCoverDecoration" class="card-cover-meta">
+            <div v-if="usesSpecialCover" class="card-cover-meta">
               <span>{{ coverAuthorText }}</span>
               <span>{{ coverDateText }}</span>
             </div>
@@ -1237,7 +1294,8 @@ onBeforeUnmount(() => {
 }
 
 .dust-template,
-.green-template {
+.green-template,
+.literary-template {
   position: relative;
   isolation: isolate;
   display: flex;
@@ -1261,6 +1319,11 @@ onBeforeUnmount(() => {
   color: rgb(0 0 0 / 90%);
 }
 
+.literary-template {
+  background: #f6f5e3;
+  color: #475221;
+}
+
 .dust-template::before,
 .green-template::before {
   position: absolute;
@@ -1272,8 +1335,30 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+.literary-template::before {
+  position: absolute;
+  z-index: -1;
+  top: calc(-974px * 420 / 900);
+  left: calc(-416px * 420 / 900);
+  width: calc(1348px * 420 / 900);
+  height: calc(2921px * 420 / 900);
+  background: var(--card-texture-image) center / cover no-repeat;
+  content: '';
+  opacity: var(--card-texture-opacity, 0.15);
+  pointer-events: none;
+}
+
+.literary-template.is-cover-page::before {
+  top: calc(-328px * 420 / 900);
+  left: calc(-24px * 420 / 900);
+  width: calc(956px * 420 / 900);
+  height: calc(2071px * 420 / 900);
+  opacity: 0.28;
+}
+
 .dust-template .card-page-header,
-.green-template .card-page-header {
+.green-template .card-page-header,
+.literary-template .card-page-header {
   position: relative;
   z-index: 2;
   font-family: inherit;
@@ -1290,13 +1375,19 @@ onBeforeUnmount(() => {
   color: rgb(0 0 0 / 60%);
 }
 
+.literary-template .card-page-header {
+  color: rgb(71 82 33 / 50%);
+}
+
 .dust-template .card-page-footer,
-.green-template .card-page-footer {
+.green-template .card-page-footer,
+.literary-template .card-page-footer {
   display: none;
 }
 
 .dust-template .card-content,
-.green-template .card-content {
+.green-template .card-content,
+.literary-template .card-content {
   position: relative;
   z-index: 2;
 }
@@ -1346,6 +1437,23 @@ onBeforeUnmount(() => {
 
 .green-template.is-cover-page .card-cover-meta {
   color: rgb(0 0 0 / 60%);
+}
+
+.literary-template.is-cover-page .card-cover-meta {
+  position: static;
+  z-index: 3;
+  order: 2;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: calc(20px * 420 / 900);
+  margin-top: calc(40px * 420 / 900);
+  color: #475221;
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif;
+  font-size: var(--card-font-size, 16px);
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
 .card-cover-line,
@@ -1568,7 +1676,7 @@ onBeforeUnmount(() => {
   }
 
   pre {
-    background: rgb(38 10 10 / 72%);
+    background: rgb(38 10 10 / 50%);
     color: rgb(255 255 255 / 90%);
   }
 }
@@ -1604,9 +1712,156 @@ onBeforeUnmount(() => {
   }
 
   pre {
-    background: rgb(20 38 16 / 76%);
+    background: rgb(20 38 16 / 50%);
     color: rgb(255 255 255 / 90%);
   }
+}
+
+.literary-template :deep(.card-content) {
+  h1,
+  h2 {
+    margin: 0 0 var(--card-title-body-gap, 37.33px);
+    color: #143103;
+    font-family: 'ZCOOL QingKe HuangYou', sans-serif !important;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h2-scale, 2.5));
+    font-weight: 400;
+    line-height: normal;
+  }
+
+  h3 {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    color: #475221;
+    font-size: calc(var(--card-font-size, 16px) * var(--card-h3-scale, 1.5));
+    font-weight: 400;
+    line-height: 1.4;
+  }
+
+  p,
+  ul,
+  ol,
+  blockquote {
+    color: #475221;
+    font-size: var(--card-font-size, 16px);
+    font-weight: 400;
+    line-height: var(--card-body-line-height, 1.5625);
+  }
+
+  p {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+
+  ul,
+  ol {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    padding-left: 22px;
+  }
+
+  li::marker {
+    color: #475221;
+  }
+
+  blockquote {
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+
+  blockquote p {
+    color: inherit;
+    font-weight: 400;
+  }
+
+  strong {
+    color: inherit;
+    font-weight: 600;
+  }
+
+  code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+  }
+
+  pre {
+    max-height: none;
+    margin: 0 0 var(--card-paragraph-gap, 18.67px);
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    color: #475221;
+    font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif;
+    font-size: var(--card-font-size, 16px);
+    line-height: var(--card-body-line-height, 1.5625);
+    white-space: pre-wrap;
+  }
+
+  img,
+  table {
+    display: none;
+  }
+}
+
+.literary-template.is-cover-page .card-content {
+  display: contents;
+}
+
+.literary-template.is-cover-page {
+  padding: 0 calc(80px * 420 / 900);
+}
+
+.literary-template.is-cover-page .card-page-header {
+  position: absolute;
+  z-index: 3;
+  top: calc(50px * 420 / 900);
+  right: calc(80px * 420 / 900);
+  left: calc(80px * 420 / 900);
+  padding: 0;
+}
+
+.literary-template.is-cover-page :deep(.card-content h1) {
+  position: relative;
+  z-index: 2;
+  order: 1;
+  display: -webkit-box;
+  width: 100%;
+  margin: calc(192px * 420 / 900) 0 0;
+  overflow: hidden;
+  color: #143103;
+  font-family: 'ZCOOL QingKe HuangYou', sans-serif !important;
+  font-size: calc(var(--card-font-size, 16px) * var(--card-h1-scale, 2.5));
+  font-weight: 400;
+  line-height: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.literary-template.is-cover-page :deep(.card-content h1 *) {
+  font-family: inherit !important;
+}
+
+.literary-template.is-cover-page :deep(.card-content p) {
+  position: absolute;
+  z-index: 2;
+  right: calc(80px * 420 / 900);
+  bottom: calc(80px * 420 / 900);
+  display: block;
+  width: calc(500px * 420 / 900);
+  max-width: calc(100% - (160px * 420 / 900));
+  max-height: 13em;
+  margin: 0;
+  overflow: hidden;
+  color: #475221;
+  font-family: 'Dinglie Songti', 'Songti SC', SimSun, serif !important;
+  font-size: var(--card-font-size, 16px);
+  font-weight: 400;
+  line-height: 1.625;
+  text-align: right;
+  overflow-wrap: break-word;
 }
 
 // 必须放在模板样式之后，避免模板的 position: relative 让测量卡片参与预览区布局。

@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖持久化 storage、长图文模板/比例类型与 Vue 响应式状态能力
+ * [OUTPUT]: 对外提供全局界面、预览模式、长图文模板选择和各类面板/对话框状态
+ * [POS]: stores 状态层的 UI 中枢，连接编辑器命令区、预览组件与配置侧栏
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 import { store } from '@/storage'
 import { addPrefix } from '@/storage/prefix'
 import type { CardRatio, CardTemplateId } from '@/lib/cards/card-templates'

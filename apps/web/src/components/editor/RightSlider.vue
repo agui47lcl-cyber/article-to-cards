@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * [INPUT]: 依赖主题配置、长图文模板注册表、样式控件与 UI 状态 Store
+ * [OUTPUT]: 对外提供公众号与长图文共用的右侧样式配置面板
+ * [POS]: editor 组件域的视觉配置入口，模板选项从 cards 注册表自动扩展并写回全局状态
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 import type {
   HeadingLevel,
   HeadingStyleType,
